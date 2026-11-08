@@ -41,15 +41,40 @@ def test_youtube_bot_challenge_does_not_instruct_a_login(monkeypatch):
     assert exc.value.code == "PLATFORM_BLOCKED"
 
 
-@pytest.mark.parametrize("cookies,code", [([], "NEED_LOGIN"), ([{"name": "li_at"}], "UPSTREAM_BROKEN")])
-def test_opencli_failure_without_the_site_login_cookie_asks_for_login(monkeypatch, cookies, code):
+@pytest.mark.parametrize("jar,code", [
+    ({"cookies": []}, "NEED_LOGIN"),
+    ({"cookies": [{"name": "li_at", "domain": ".linkedin.com"}]}, "UPSTREAM_BROKEN"),
+    ({"cookies": [{"name": "li_at", "domain": ".example.com"}]}, "NEED_LOGIN"),
+    (None, "UPSTREAM_BROKEN"),  # unreadable cookies are no proof of a logout
+])
+def test_opencli_failure_without_the_site_login_cookie_asks_for_login(monkeypatch, jar, code):
     from agent_reach.channels import _opencli_site, linkedin
     from agent_reach.runtime import browser, cdp
     def broken(*a, **k):
         raise ReachError("UPSTREAM_BROKEN", "OpenCLI: Error: Text not found: Jobs")
     monkeypatch.setattr(_opencli_site, "opencli_call", broken)
     monkeypatch.setattr(browser, "is_running", lambda: True)
-    monkeypatch.setattr(cdp, "cookies", lambda domain: cookies)
+    monkeypatch.setattr(cdp, "call", lambda method, *a, **k: jar)
     with pytest.raises(ReachError) as exc:
         linkedin.LinkedInChannel()._jobs(query="python", location=None, limit=2, timeout=5)
     assert exc.value.code == code
+
+
+@pytest.mark.parametrize("jar,code", [
+    ({"cookies": []}, "NEED_LOGIN"),
+    ({"cookies": [{"name": "sessionid", "domain": ".instagram.com"}]}, "UPSTREAM_BROKEN"),
+    (None, "UPSTREAM_BROKEN"),
+])
+def test_instagram_failure_without_a_session_cookie_asks_for_login(monkeypatch, jar, code):
+    from agent_reach.channels import _opencli_site, instagram
+    from agent_reach.runtime import browser, cdp
+    def broken(*a, **k):
+        raise ReachError("UPSTREAM_BROKEN", "Error: HTTP 404 - make sure you are logged in to Instagram")
+    monkeypatch.setattr(_opencli_site, "opencli_call", broken)
+    monkeypatch.setattr(browser, "is_running", lambda: True)
+    monkeypatch.setattr(cdp, "call", lambda method, *a, **k: jar)
+    with pytest.raises(ReachError) as exc:
+        instagram.InstagramChannel()._opencli_search(query="nasa", limit=2, timeout=5)
+    assert exc.value.code == code
+
+

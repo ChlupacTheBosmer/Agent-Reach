@@ -53,7 +53,7 @@ TOOLS: Dict[str, Tool] = {
     t.name: t
     for t in (
         Tool("cloakbrowser", "pip", "cloakbrowser", ("cloakbrowser",), tested="0.6.3"),
-        Tool("opencli", "npm", "@jackwener/opencli", ("opencli",), singleton=True, floor="1.8.7", exclude=("1.8.8",), tested="1.8.7", needs=("node",)),
+        Tool("opencli", "npm", "@jackwener/opencli", ("opencli",), singleton=True, floor="1.8.7", exclude=("1.8.8",), tested="2.0.3", needs=("node",)),
         Tool("ffmpeg", "ffmpeg", "imageio-ffmpeg", ("ffmpeg",)),
         Tool("node", "node", "", ("node", "npm", "npx")),
         Tool("uv", "uv", "", ("uv", "uvx")),
