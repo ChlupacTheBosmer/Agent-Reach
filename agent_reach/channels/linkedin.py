@@ -11,26 +11,23 @@ from agent_reach.utils.url import host_matches
 from ._opencli_site import OpenCLISiteChannel
 from .base import Action, Param
 
-_SECTIONS = ("Topcard|About|Experience|Education|Skills|Certifications|Licenses|Languages|Projects|Volunteering|Honors|"
-             "Publications|Courses|Recommendations|Organizations|Patents|TestScores|Services")
 PERSON_READY = ("!!document.querySelector('[id$=\"Topcard\"], main h1') || "
                 "/\\/(login|checkpoint|authwall|uas)/.test(location.pathname)")
-PERSON_JS = f"""(() => {{
-  if (/\\/(login|checkpoint|authwall|uas)/i.test(location.pathname)) return {{_blocked: location.pathname}};
-  const cards = {{}};
-  for (const el of document.querySelectorAll('[id*="profile.card"]')) {{
-    const m = el.id.match(/({_SECTIONS})$/);
-    if (m && !cards[m[1]]) cards[m[1]] = el.innerText.trim();
-  }}
-  for (const id of ['about', 'experience', 'education', 'skills', 'licenses_and_certifications', 'languages', 'projects']) {{
-    const sec = (document.getElementById(id) || {{}}).closest ? document.getElementById(id).closest('section') : null;
-    const key = id[0].toUpperCase() + id.slice(1);
-    if (sec && !cards[key]) cards[key] = sec.innerText.trim();
-  }}
-  if (!cards.Topcard) {{ const h = document.querySelector('main h1'); if (h) cards.Topcard = h.closest('section').innerText.trim(); }}
-  if (!cards.Topcard) return {{_missing: 'LinkedIn profile not found or not rendered'}};
-  return {{cards}};
-}})()"""
+PERSON_JS = """(() => {
+  if (/\\/(login|checkpoint|authwall|uas)/i.test(location.pathname)) return {_blocked: location.pathname};
+  const cards = {};
+  const top = document.querySelector('[id$="Topcard"]') || ((document.querySelector('main h1') || {}).closest || (() => null)).call(document.querySelector('main h1'), 'section');
+  if (top) cards.Topcard = top.innerText.trim();
+  // Every other section is a profile card with its own heading (About, Experience, Education, Skills...).
+  for (const h of document.querySelectorAll('main h2, h2')) {
+    const card = h.closest('[id*="profile.card"]') || h.closest('section[data-view-name], section.artdeco-card');
+    const name = h.innerText.trim();
+    if (!card || !name || cards[name] || card === top) continue;
+    cards[name] = card.innerText.trim();
+  }
+  if (!cards.Topcard) return {_missing: 'LinkedIn profile not found or not rendered'};
+  return {cards};
+})()"""
 
 
 class LinkedInChannel(OpenCLISiteChannel):
@@ -74,7 +71,7 @@ class LinkedInChannel(OpenCLISiteChannel):
         if not m:
             raise ReachError(BAD_INPUT, "Expected a linkedin.com/in/<id> profile URL")
         url = f"https://www.linkedin.com/in/{m.group(1)}/"
-        d = page.read("linkedin", url, PERSON_JS, ready=PERSON_READY, settle=4)
+        d = page.read("linkedin", url, PERSON_JS, ready=PERSON_READY, settle=3, scroll_steps=5)
         cards = d.get("cards") or {}
         top = (cards.get("Topcard") or "").splitlines()
         body = "\n\n".join(f"## {name}\n{text}" for name, text in cards.items() if name != "Topcard")

@@ -13,8 +13,9 @@ from .result import NOT_FOUND, UPSTREAM_BROKEN, ReachError
 
 
 def read(site: str, url: str, expression: str, *, ready: str = "document.readyState === 'complete'",
-         settle: float = 3.0, timeout: float = 45.0):
-    """Open `url`, wait for `ready` (a JS boolean), then return the JSON value of `expression`."""
+         settle: float = 3.0, timeout: float = 45.0, scroll_steps: int = 0):
+    """Open `url`, wait for `ready` (a JS boolean), scroll down in `scroll_steps` steps (sections that render
+    only when scrolled into view), then return the JSON value of `expression`."""
     from . import browser, cdp, pacing
 
     pacing.before(site)
@@ -34,6 +35,10 @@ def read(site: str, url: str, expression: str, *, ready: str = "document.readySt
         else:
             raise ReachError(UPSTREAM_BROKEN, f"{url} did not finish loading within {timeout:.0f}s")
         time.sleep(settle)  # let lazily rendered parts appear, as a reader would wait
+        for step in range(1, scroll_steps + 1):
+            cdp.call("Runtime.evaluate", {"expression": f"window.scrollTo(0, document.body.scrollHeight * {step / scroll_steps})"},
+                     target_id=target)
+            time.sleep(2.0)
         res = cdp.call("Runtime.evaluate", {"expression": f"JSON.stringify(({expression}))", "returnByValue": True},
                        target_id=target)
         raw = ((res or {}).get("result") or {}).get("value")
