@@ -43,7 +43,8 @@ def read(site: str, url: str, expression: str, *, ready: str = "document.readySt
                        target_id=target)
         raw = ((res or {}).get("result") or {}).get("value")
         if raw is None:
-            raise ReachError(UPSTREAM_BROKEN, f"could not read {url}")
+            why = ((res or {}).get("exceptionDetails") or {}).get("exception", {}).get("description", "no result")
+            raise ReachError(UPSTREAM_BROKEN, f"could not read {url}: {str(why)[:200]}")
         data = json.loads(raw)
     finally:
         if target:

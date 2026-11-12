@@ -6,6 +6,7 @@ Channel registry — every platform exposed by `agent-reach <channel> <action>`.
 from typing import List, Optional
 
 from .base import Channel
+from .bluesky import BlueskyChannel
 from .facebook import FacebookChannel
 from .github import GitHubChannel
 from .instagram import InstagramChannel
@@ -23,6 +24,7 @@ ALL_CHANNELS: List[Channel] = [
     FacebookChannel(),
     InstagramChannel(),
     LinkedInChannel(),
+    BlueskyChannel(),
     WebChannel(),
 ]
 

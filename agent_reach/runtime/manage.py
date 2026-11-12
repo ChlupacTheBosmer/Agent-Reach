@@ -931,6 +931,7 @@ def uninstall(dry_run: bool = False) -> dict:
 
 CONFIG_KEYS = {"groq-key": "groq_api_key", "openai-key": "openai_api_key", "proxy": "proxy", "github-token": "github_token",
                "browser-port": "browser_port",
+               "bluesky-handle": "bluesky_handle", "bluesky-app-password": "bluesky_app_password",  # fork
 }
 
 
