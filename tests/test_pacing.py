@@ -101,3 +101,15 @@ def test_linkedin_people_and_company_use_opencli(monkeypatch):
     assert call.call_args.args == ("linkedin", ["people-search", "ml brno", "--limit", "3"])
     run_action(linkedin.LinkedInChannel(), "company", {"target": "https://www.linkedin.com/company/cesnet/about/"})
     assert call.call_args.args == ("linkedin", ["company", "https://www.linkedin.com/company/cesnet/"])
+
+
+def test_facebook_admins_returns_messageable_people(monkeypatch):
+    from agent_reach.channels import facebook
+
+    def fake(site, url, js, **kw):
+        assert url == "https://www.facebook.com/groups/youngfreqs/members/admins"
+        return {"group": "Young Freqs", "people": [{"name": "Ana", "id": "42", "href": "https://www.facebook.com/groups/1/user/42/", "role": "Správce"}]}
+    monkeypatch.setattr(page, "read", fake)
+    out = run_action(facebook.FacebookChannel(), "admins", {"target": "https://www.facebook.com/groups/youngfreqs/"})
+    item = out["items"][0]
+    assert out["ok"] and item["title"] == "Ana" and item["raw"]["user_id"] == "42" and item["text"] == "Správce"
