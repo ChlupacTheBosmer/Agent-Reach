@@ -1,0 +1,228 @@
+"""Publisher logic: networks, accounts and their homes, preview + hash, confirmed queue, running a post."""
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+from urllib.parse import urlsplit
+
+from . import store
+
+#: What each network can do through the publisher. `target`: own = the account itself, else what the user picks.
+NETWORKS = {
+    "bluesky": {"route": "api", "kinds": {
+        "bluesky-post": {"text": 300, "images": 4, "target": "own"},
+        "bluesky-reply": {"text": 300, "images": 4, "target": "post"},
+        "bluesky-message": {"text": 1000, "images": 0, "target": "person"}}},
+    "twitter": {"route": "browser", "kinds": {
+        "twitter-post": {"text": 280, "images": 4, "target": "own"},
+        "twitter-reply": {"text": 280, "images": 1, "target": "post"}}},
+    "facebook": {"route": "browser", "kinds": {
+        "facebook-group-post": {"text": 5000, "images": 0, "target": "group"},
+        "facebook-message": {"text": 2000, "images": 0, "target": "person"}}},
+    "linkedin": {"route": "browser", "kinds": {
+        "linkedin-message": {"text": 2000, "images": 0, "target": "thread"},
+        "linkedin-connect": {"text": 300, "images": 0, "target": "person"}}},
+}
+OWN_URL = {"bluesky": "https://bsky.app/profile/{h}", "twitter": "https://x.com/{h}"}
+#: Account-home settings each network accepts (written to that home's Agent Reach config, never returned).
+CREDENTIALS = {"bluesky": ("bluesky_handle", "bluesky_app_password")}
+
+
+class Refused(Exception):
+    """A request the publisher will not carry out; the message says why."""
+
+
+# ── accounts ──
+
+def slug(s: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")[:40]
+
+
+def home(account_id: str):
+    return store.data_dir() / "accounts" / account_id
+
+
+def _check_proxy(proxy: str) -> None:
+    u = urlsplit(proxy)
+    if u.scheme not in ("http", "https", "socks5") or not u.hostname or not u.port:
+        raise Refused("proxy must look like http://user:pass@host:port (one fixed address for this account)")
+
+
+def masked(proxy: str) -> str:
+    u = urlsplit(proxy) if proxy else None
+    return f"{u.scheme}://{u.hostname}:{u.port}" if u and u.hostname else ""
+
+
+def public(acc: dict) -> dict:
+    return {**acc, "proxy": masked(acc["proxy"])}
+
+
+def create_account(db, body: dict, actor: str) -> dict:
+    network = body.get("network")
+    if network not in NETWORKS:
+        raise Refused(f"unknown network {network!r}; one of {', '.join(NETWORKS)}")
+    label, owner = (body.get("label") or "").strip(), (body.get("owner") or "").strip()
+    if not label or not owner:
+        raise Refused("label and owner are required")
+    route = NETWORKS[network]["route"]
+    proxy = (body.get("proxy") or "").strip()
+    if route == "browser":
+        _check_proxy(proxy)  # browser accounts never go out from the server's own address
+    acc = {"id": f"{network}-{slug(label)}", "network": network, "label": label, "owner": owner, "route": route,
+           "handle": (body.get("handle") or "").strip().lstrip("@"), "proxy": proxy,
+           "status": "needs-login" if route == "browser" else "needs-credentials", "created": time.time()}
+    if db.execute("SELECT 1 FROM accounts WHERE id=?", (acc["id"],)).fetchone():
+        raise Refused(f"account {acc['id']} exists")
+    db.execute("INSERT INTO accounts VALUES (:id,:network,:label,:owner,:route,:handle,:proxy,:status,:created)", acc)
+    if proxy:
+        in_home(acc["id"], "configure", {"proxy": proxy})
+    store.log(db, actor, "account.create", public(acc))
+    return public(acc)
+
+
+def account(db, account_id: str) -> dict:
+    row = db.execute("SELECT * FROM accounts WHERE id=?", (account_id,)).fetchone()
+    if not row:
+        raise Refused(f"no account {account_id!r}")
+    return dict(row)
+
+
+def set_credentials(db, account_id: str, body: dict, actor: str) -> dict:
+    acc = account(db, account_id)
+    allowed = CREDENTIALS.get(acc["network"], ())
+    values = {k: str(v) for k, v in body.items() if k in allowed and v}
+    if not values:
+        raise Refused(f"{acc['network']} takes credentials {', '.join(allowed) or '(none: log in in the live view)'}")
+    in_home(account_id, "configure", values)
+    if values.get("bluesky_handle"):
+        db.execute("UPDATE accounts SET handle=? WHERE id=?", (values["bluesky_handle"].lstrip("@"), account_id))
+    db.execute("UPDATE accounts SET status='unchecked' WHERE id=?", (account_id,))
+    store.log(db, actor, "account.credentials", {"account": account_id, "keys": sorted(values)})
+    return public(account(db, account_id))
+
+
+def check_account(db, account_id: str, actor: str) -> dict:
+    out = in_home(account_id, "check", {})
+    status = "ok" if out.get("ok") else ("needs-login" if account(db, account_id)["route"] == "browser" else "needs-credentials")
+    db.execute("UPDATE accounts SET status=? WHERE id=?", (status, account_id))
+    store.log(db, actor, "account.check", {"account": account_id, **out})
+    return out
+
+
+# ── preview, confirm, queue ──
+
+def normalize(db, body: dict) -> dict:
+    acc = account(db, body.get("account", ""))
+    net = NETWORKS[acc["network"]]
+    kind = body.get("kind")
+    if kind not in net["kinds"]:
+        raise Refused(f"{acc['network']} supports {', '.join(net['kinds'])}")
+    spec = net["kinds"][kind]
+    text = (body.get("text") or "").strip()
+    if not text:
+        raise Refused("the post has no text")
+    if len(text) > spec["text"]:
+        raise Refused(f"{kind}: {len(text)} characters, at most {spec['text']}")
+    media = [{"url": m["url"], "alt": (m.get("alt") or "").strip()} for m in body.get("media") or []]
+    if len(media) > spec["images"]:
+        raise Refused(f"{kind} takes at most {spec['images']} images")
+    for m in media:
+        if urlsplit(m["url"]).scheme != "https":
+            raise Refused("media must be https URLs")
+    if spec["target"] == "own":
+        if not acc["handle"]:
+            raise Refused("the account has no handle yet; set its credentials or handle first")
+        target, expected = OWN_URL[acc["network"]].format(h=acc["handle"]), acc["handle"]
+    else:
+        target, expected = (body.get("target") or "").strip(), (body.get("expected_name") or "").strip()
+        if not target or not expected:
+            raise Refused(f"{kind} needs a target ({spec['target']}) and the exact name the page shows")
+    post = {"account": acc["id"], "kind": kind, "target": target, "expected_name": expected, "text": text,
+            "media": media, "options": body.get("options") or {}}
+    from agent_reach import outbox
+    outbox.validate({**post, "status": "", "created": "", "result": ""})
+    return post
+
+
+def digest(post: dict) -> str:
+    return hashlib.sha256(json.dumps(post, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()[:16]
+
+
+def preview(db, body: dict) -> dict:
+    post = normalize(db, body)
+    acc = account(db, post["account"])
+    warnings = [] if acc["status"] == "ok" else [f"account status is {acc['status']}; run Check first"]
+    return {"post": post, "hash": digest(post), "warnings": warnings}
+
+
+def enqueue(db, body: dict, actor: str) -> dict:
+    post = normalize(db, body)
+    if body.get("confirm") != digest(post):
+        raise Refused("this content was not confirmed as previewed: preview it again and confirm the new version")
+    author = (body.get("author") or "").strip()
+    if not author:
+        raise Refused("author is required")
+    acc = account(db, post["account"])
+    if acc["route"] == "browser" and not acc["proxy"]:
+        raise Refused("this browser account has no proxy; it never posts from the server's own address")
+    due = time.time()
+    if body.get("at"):
+        import datetime as dt
+        due = dt.datetime.fromisoformat(str(body["at"]).replace("Z", "+00:00")).timestamp()
+    cur = db.execute("INSERT INTO posts(account, payload, hash, author, due, created) VALUES (?,?,?,?,?,?)",
+                     (acc["id"], json.dumps(post, ensure_ascii=False), digest(post), author, due, time.time()))
+    store.log(db, actor, "post.queue", {"id": cur.lastrowid, "author": author, "account": acc["id"], "kind": post["kind"],
+                                        "hash": digest(post), "due": due})
+    return get_post(db, cur.lastrowid)
+
+
+def get_post(db, post_id: int) -> dict:
+    row = db.execute("SELECT * FROM posts WHERE id=?", (post_id,)).fetchone()
+    if not row:
+        raise Refused(f"no post {post_id}")
+    return {**dict(row), "payload": json.loads(row["payload"])}
+
+
+def cancel(db, post_id: int, actor: str) -> dict:
+    n = db.execute("UPDATE posts SET status='cancelled', finished=? WHERE id=? AND status='queued'", (time.time(), post_id)).rowcount
+    if not n:
+        raise Refused("only a queued post can be cancelled")
+    store.log(db, actor, "post.cancel", {"id": post_id})
+    return get_post(db, post_id)
+
+
+# ── running ──
+
+def in_home(account_id: str, command: str, payload: dict, timeout: float = 120) -> dict:
+    """Run one job step in that account's own Agent Reach home (separate process = no shared state)."""
+    h = home(account_id)
+    h.mkdir(parents=True, exist_ok=True)
+    env = {**os.environ, "HOME": str(h), "PUBLISHER_ACCOUNT": account_id, "PUBLISHER_DATA": str(store.data_dir())}
+    p = subprocess.run([sys.executable, "-m", "agent_reach.publisher.job", command], input=json.dumps(payload),
+                       capture_output=True, text=True, timeout=timeout, env=env)
+    try:
+        return json.loads(p.stdout.strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        return {"ok": False, "error": (p.stderr or p.stdout).strip()[-600:] or f"exit {p.returncode}"}
+
+
+def run_due(db, now=None) -> dict | None:
+    """Publish the oldest due post, one at a time (human pace is enforced inside the job)."""
+    now = time.time() if now is None else now
+    row = db.execute("SELECT id FROM posts WHERE status='queued' AND due<=? ORDER BY due, id LIMIT 1", (now,)).fetchone()
+    if not row:
+        return None
+    if not db.execute("UPDATE posts SET status='running' WHERE id=? AND status='queued'", (row["id"],)).rowcount:
+        return None
+    post = get_post(db, row["id"])
+    out = in_home(post["account"], "publish", {"post": post["payload"]}, timeout=900)
+    status = "sent" if out.get("ok") else "failed"  # a failed post is never retried automatically
+    db.execute("UPDATE posts SET status=?, result=?, finished=? WHERE id=?",
+               (status, out.get("result") or out.get("error") or "", time.time(), row["id"]))
+    store.log(db, "publisher", f"post.{status}", {"id": row["id"], **out})
+    return get_post(db, row["id"])

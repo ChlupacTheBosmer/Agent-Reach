@@ -284,17 +284,26 @@ def twitter(d: dict, send: bool) -> str:
     if not send:
         return f"check ok: X account / target verified for @{want}; nothing posted"
     args = ["reply", d["target"], d["text"]] if d["kind"] == "twitter-reply" else ["post", d["text"]]
+    images = [m["path"] for m in d.get("media") or []]
+    if len(images) > 4:
+        raise SystemExit("X takes at most 4 images per post")
+    if images and d["kind"] == "twitter-post":
+        args += ["--images", ",".join(images)]
+    elif images:
+        args += ["--image", images[0]]
     out = opencli_call("twitter", args, timeout=180)
     return "posted: " + json.dumps(out, ensure_ascii=False)[:300]
 
 
 # ── Bluesky (official AT Protocol API with an app password) ──
 
-def _bsky(method: str, path: str, body=None, token: str = "", proxy: str = "", base: str = "https://bsky.social"):
+def _bsky(method: str, path: str, body=None, token: str = "", proxy: str = "", base: str = "https://bsky.social",
+          raw: bytes = None, mime: str = "application/json"):
+    import urllib.error
     import urllib.request
-    req = urllib.request.Request(f"{base}/xrpc/{path}", method=method,
-                                 data=json.dumps(body).encode() if body is not None else None,
-                                 headers={"Content-Type": "application/json", "User-Agent": "agent-reach-outbox",
+    data = raw if raw is not None else (json.dumps(body).encode() if body is not None else None)
+    req = urllib.request.Request(f"{base}/xrpc/{path}", method=method, data=data,
+                                 headers={"Content-Type": mime, "User-Agent": "agent-reach-outbox",
                                           **({"Authorization": f"Bearer {token}"} if token else {}),
                                           **({"atproto-proxy": proxy} if proxy else {})})
     try:
@@ -362,8 +371,21 @@ def bluesky(d: dict, send: bool) -> str:
         _bsky("POST", "chat.bsky.convo.sendMessage", {"convoId": convo["id"], "message": {"text": d["text"],
               "facets": _facets(d["text"])}}, token=token, proxy=chat)
         return f"sent to @{prof['handle']}"
+    media = d.get("media") or []
+    if len(media) > 4:
+        raise SystemExit("Bluesky takes at most 4 images per post")
+    for m in media:
+        if Path(m["path"]).stat().st_size > 1_000_000:
+            raise SystemExit(f"{Path(m['path']).name} is over Bluesky's 1 MB image limit; resize it first")
     if not send:
         return f"check ok: logged in as @{me}; target verified; nothing posted"
+    if media:
+        images = []
+        for m in media:
+            blob = _bsky("POST", "com.atproto.repo.uploadBlob", token=token, raw=Path(m["path"]).read_bytes(),
+                         mime=m.get("mime") or "image/jpeg")["blob"]
+            images.append({"alt": m.get("alt") or "", "image": blob})
+        record["embed"] = {"$type": "app.bsky.embed.images", "images": images}
     out = _bsky("POST", "com.atproto.repo.createRecord", {"repo": sess["did"], "collection": "app.bsky.feed.post",
                                                           "record": record}, token=token)
     rkey = out["uri"].rsplit("/", 1)[-1]

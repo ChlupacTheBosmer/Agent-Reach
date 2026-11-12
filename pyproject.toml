@@ -45,6 +45,7 @@ dev = [
 [project.scripts]
 agent-reach = "agent_reach.cli:main"
 agent-reach-outbox = "agent_reach.outbox:main"
+agent-reach-publisher = "agent_reach.publisher.server:main"
 
 [project.urls]
 Homepage = "https://github.com/Panniantong/agent-reach"
