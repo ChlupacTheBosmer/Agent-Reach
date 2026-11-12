@@ -26,7 +26,7 @@ def _reddit(args, timeout: float) -> list:
 
 class RedditChannel(Channel):
     name = "reddit"
-    description = "Reddit 帖子和评论"
+    description = "Reddit posts and comments"
 
     level = "optional"
     login_url = "https://www.reddit.com/login/"
@@ -67,6 +67,12 @@ class RedditChannel(Channel):
             (("opencli", "_opencli_subreddit"),),
             live_test={"name": "python", "limit": 2},
         ),
+        Action(
+            "saved",
+            "Your own saved posts (needs your login)",
+            (Param("limit", "max posts", required=False, type=int, default=20),),
+            (("opencli", "_opencli_saved"),),
+        ),
     )
 
     def can_handle(self, url: str) -> bool:
@@ -94,3 +100,8 @@ class RedditChannel(Channel):
 
     def _opencli_subreddit(self, *, name: str, limit: int, timeout: float) -> list:
         return _reddit(["subreddit", name.removeprefix("r/"), "--limit", str(limit)], timeout)[:limit]
+
+    def _opencli_saved(self, *, limit: int, timeout: float) -> list:
+        # An empty saved list is a valid answer, so do not use _reddit (which treats empty as broken).
+        out = opencli_call("reddit", ["saved", "--limit", str(limit)], timeout=timeout, login_hint=_REDDIT_LOGIN_HINT)
+        return opencli_items(out)[:limit]

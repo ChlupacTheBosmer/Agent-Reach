@@ -65,15 +65,17 @@ Paste the `check --text` output into the PR. Also add unit tests under `tests/` 
 ## Pull requests
 
 - Small, focused changes.
-- Commit messages in English.
+- Commit messages and all documentation in English. This fork has no Chinese platforms; do not add channels for them.
 - Update the README channel table if you add a channel or change what it needs.
 - Never commit keys, cookies, account names or machine-specific paths.
 
 ## Release notes
 
-Every version section in `CHANGELOG.md` starts with a short plain summary for users, in Chinese and in English: what changed for them and anything they must do, in 1 to 4 short points, with no jargon (no file names, commands or internal terms). This text becomes the GitHub release body, which the AI reads from `meta.update.notes` and shows the user when it offers an update. Technical entries follow below the summary.
+Every version section in `CHANGELOG.md` starts with a short plain summary for users, in English: what changed for them and anything they must do, in 1 to 4 short points, with no jargon (no file names, commands or internal terms). This text becomes the GitHub release body, which the AI reads from `meta.update.notes` and shows the user when it offers an update. Technical entries follow below the summary.
 
 ## Releasing (maintainers)
+
+This is the upstream release process. This fork's install and update guides instead install a reviewed commit or tag straight from git; see [FORK.md](FORK.md).
 
 Users install and update from the latest GitHub release, and 1.5 users are sent to `docs/update.md` on `main`, which points to `docs/install.md`, so the merge and the release must land together:
 
@@ -84,13 +86,3 @@ Users install and update from the latest GitHub release, and 1.5 users are sent 
 ## Reporting issues
 
 Include your OS, `agent-reach doctor --text`, `agent-reach check <channel> --text`, steps to reproduce, and what you expected. Remove personal data first.
-
----
-
-## 中文简述
-
-- 渠道 = `agent_reach/channels/` 里的一个 `Channel` 子类，在 `channels/__init__.py` 注册。需要声明 `level`、`actions`（`Action`/`Param`、有序后端、`live_test`），按需声明 `tools`、`prereqs`、`login_url` / `session` / `login_argv`、`setup_problems()`。
-- 不读取个人浏览器 Cookie 数据库，不替用户登录。用户可明确授权通过指定 Browser Bridge 或本地文件做一次该站登录态导入，不保留长期导出授权；数据只放在 `~/.agent-reach/` 下。
-- 新渠道合并前必须在本地跑通 `agent-reach check <channel>` 实测，并把输出贴在 PR 里。
-- 提交前运行 `ruff check agent_reach tests` 和 `pytest`。Commit message 用英文。
-- 发布说明：`CHANGELOG.md` 每个版本开头先写给用户看的大白话摘要（中文和英文各一份，1 到 4 条，不用术语），这段会成为 GitHub release 正文，AI 提示更新时会讲给用户听。

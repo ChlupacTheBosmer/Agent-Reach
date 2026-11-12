@@ -27,10 +27,10 @@ def test_public_success_never_installs_binds_or_opens_a_browser(monkeypatch, pub
     for module, name in ((manage, "add"), (tools, "ensure"), (browser, "ensure_running"), (dispatch, "query_slot")):
         monkeypatch.setattr(module, name, Mock(side_effect=AssertionError("public query touched browser setup")))
     monkeypatch.setattr(LinkedInChannel, "_jobs", Mock(side_effect=AssertionError("used site tool")))
-    out = run_action(LinkedInChannel(), "jobs", {"query": "Data Engineer", "location": "深圳", "limit": 2})
+    out = run_action(LinkedInChannel(), "jobs", {"query": "Data Engineer", "location": "Prague", "limit": 2})
     assert out["ok"] and out["backend"] == "public-web"
     query = public_search.call_args.kwargs["query"]
-    assert "site:linkedin.com/jobs/view/" in query and "深圳" in query
+    assert "site:linkedin.com/jobs/view/" in query and "Prague" in query
     assert out["meta"]["access"]["scope"] == "search_results"
     assert out["meta"]["access"]["completeness_verified"] is False
     assert out["items"][0]["raw"]["content_scope"] == "search_results"

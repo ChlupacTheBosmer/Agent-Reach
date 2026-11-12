@@ -34,10 +34,10 @@ def _enter_later(fn):
 
 
 def test_third_query_of_a_site_waits_in_line_while_other_sites_run(monkeypatch):
-    with bb.query_slot("xiaohongshu"), bb.query_slot("xiaohongshu"):
+    with bb.query_slot("instagram"), bb.query_slot("instagram"):
         with bb.query_slot("twitter"):  # another site is not blocked by a full site
             pass
-        entered, release, t, errors = _enter_later(lambda: bb.query_slot("xiaohongshu"))
+        entered, release, t, errors = _enter_later(lambda: bb.query_slot("instagram"))
         assert not entered.wait(0.6)  # queued, not refused
     assert entered.wait(5)
     release.set()
@@ -82,7 +82,7 @@ def test_exclusive_waits_for_running_queries_and_holds_off_new_ones(monkeypatch)
     assert x_entered.wait(5)
     monkeypatch.setattr(bb, "QUEUE_WAIT", 0.3)
     with pytest.raises(ReachError):
-        with bb.query_slot("xiaohongshu"):
+        with bb.query_slot("instagram"):
             pass
     x_release.set()
     x_thread.join(5)

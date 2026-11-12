@@ -53,12 +53,6 @@ TOOLS: Dict[str, Tool] = {
     t.name: t
     for t in (
         Tool("cloakbrowser", "pip", "cloakbrowser", ("cloakbrowser",), tested="0.6.3"),
-        Tool("bili-cli", "pip", "bilibili-cli", ("bili",), tested="0.6.2"),
-        Tool(
-            "boss-agent-cli", "pip",
-            "boss-agent-cli @ https://github.com/can4hou6joeng4/boss-agent-cli/archive/4c991b77086a203173bf08a4cb64a23af6514fe6.zip",
-            ("boss",),
-        ),
         Tool("opencli", "npm", "@jackwener/opencli", ("opencli",), singleton=True, floor="1.8.7", exclude=("1.8.8",), tested="1.8.7", needs=("node",)),
         Tool("ffmpeg", "ffmpeg", "imageio-ffmpeg", ("ffmpeg",)),
         Tool("node", "node", "", ("node", "npm", "npx")),
@@ -523,19 +517,7 @@ def ensure(name: str, *, allow_upgrade: bool = False, upgrade: bool = False) -> 
     private_ok = all(_private_bin(tool, c).exists() for c in tool.commands)
     if tool.kind in ("node", "uv", "ffmpeg") and not private_ok and all(shutil.which(c) for c in tool.commands):
         return {"tool": name, "owner": "system", "scope": "system", "version": None}
-    pinned_mismatch = False
-    if private_ok and tool.name == "boss-agent-cli":
-        venv = tool_dir(tool.name) / "venv"
-        sources = list(venv.glob("**/boss_agent_cli-*.dist-info/direct_url.json"))
-        expected = tool.package.split(" @ ", 1)[-1].strip()
-        try:
-            source = json.loads(sources[0].read_text()) if sources else {}
-            commit = expected.rsplit("/", 1)[-1].removesuffix(".zip")
-            pinned_mismatch = not (source.get("url") == expected or
-                source.get("vcs_info", {}).get("commit_id") == commit)
-        except (OSError, ValueError):
-            pinned_mismatch = True
-    if not private_ok or not ours or upgrade or pinned_mismatch:
+    if not private_ok or not ours or upgrade:
         _install(tool)
     elif entry.get("version"):
         return {"tool": name, **entry}

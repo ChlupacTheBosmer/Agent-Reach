@@ -21,7 +21,7 @@ def _x(args, timeout: float) -> list:
 
 class TwitterChannel(Channel):
     name = "twitter"
-    description = "Twitter/X 推文"
+    description = "Twitter/X posts"
 
     # twitter-cli is not used here: even with explicit credentials it re-reads
     # browser cookies whenever verification fails.
@@ -69,6 +69,12 @@ class TwitterChannel(Channel):
             (Param("target", "tweet id or link"),),
             (("opencli", "_opencli_thread"),),
         ),
+        Action(
+            "bookmarks",
+            "Your own bookmarks (needs your login)",
+            (Param("limit", "max posts", required=False, type=int, default=20),),
+            (("opencli", "_opencli_bookmarks"),),
+        ),
     )
 
     def can_handle(self, url: str) -> bool:
@@ -89,3 +95,9 @@ class TwitterChannel(Channel):
     def _opencli_thread(self, *, target: str, timeout: float) -> list:
         tweet_id = str(target).rstrip("/").split("/")[-1].split("?")[0]
         return _x(["thread", tweet_id], timeout)
+
+    def _opencli_bookmarks(self, *, limit: int, timeout: float) -> list:
+        # An empty bookmark list is a valid answer, so do not use _x (which treats empty as broken).
+        out = opencli_call("twitter", ["bookmarks", "--limit", str(limit)], timeout=timeout,
+                           login_hint=_TWITTER_LOGIN_HINT)
+        return opencli_items(out)[:limit]

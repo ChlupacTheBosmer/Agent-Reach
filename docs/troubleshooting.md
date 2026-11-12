@@ -44,9 +44,9 @@ Some channel tools install at tested versions; others use a supported range. `ag
 
 `login CHANNEL` opens the Reach dedicated window. The user logs in there. Personal Chrome sessions are never imported. `browser setup` prepares the dedicated extension and connection; an incompatible existing Bridge is left untouched and reported.
 
-Boss requires an existing CDP BOSS page. Select it with `browser bind boss http://127.0.0.1:PORT`. Only explicit `login boss --new-browser` may open its persistent dedicated profile. After the user confirms login and stability, run `login boss --sync`. Do not clear risk locks or switch profiles to retry a platform block.
+Saved state is not proof of authentication: use `check CHANNEL --search`. Do not clear risk locks or switch profiles to retry a platform block.
 
-LinkedIn/Bilibili preserve existing native sessions. `login CHANNEL --native` explicitly runs their own authentication if necessary. Saved state is not proof of authentication: use `check CHANNEL --search`.
+Your own saved items (`twitter bookmarks`, `reddit saved`, `instagram saved`) always need a login to that site; `NEED_LOGIN` there means the user logs in with `login CHANNEL`.
 
 Search-only acceptance is shown as search_ready, not proof that every action works. PLATFORM_BLOCKED means stop and have the user check the official page. BUSY means another Reach command owns the same browser; schedule later.
 
@@ -58,10 +58,10 @@ Search-only acceptance is shown as search_ready, not proof that every action wor
 
 Agent Reach is installed with uv. A copy installed another way (pip or pipx, as 1.5 was) moves itself to uv on the next `agent-reach update`; your channels, keys and logins under `~/.agent-reach/` are kept.
 
-A new version broke something? Go back to the previous release, then line the tools and skill up with it:
+A new version broke something? Go back to the previous commit or tag of this fork that you had reviewed, then line the tools and skill up with it:
 
 ```bash
-uv tool install --force https://github.com/Panniantong/Agent-Reach/archive/refs/tags/v<previous>.zip
+uv tool install --force git+https://github.com/ChlupacTheBosmer/Agent-Reach@<previous-commit-or-tag>
 agent-reach update --sync-only
 ```
 
@@ -93,4 +93,4 @@ The setting is kept across updates. If the Agent Reach browser is open, it close
 
 - `agent-reach update` and try again.
 - Remove and re-add a channel: `agent-reach remove <channel>` then `agent-reach add <channel>` (remove also clears its login, its site cookies in the Agent Reach browser, and its private tools nobody else uses).
-- Open an issue at https://github.com/Panniantong/Agent-Reach/issues with the output of `agent-reach doctor --text` (it starts with the version) and `agent-reach check <channel> --text`. Remove any personal data first.
+- Open an issue at https://github.com/ChlupacTheBosmer/Agent-Reach/issues with the output of `agent-reach doctor --text` (it starts with the version) and `agent-reach check <channel> --text`. Remove any personal data first.

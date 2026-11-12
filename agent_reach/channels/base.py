@@ -2,7 +2,7 @@
 """
 Channel base class.
 
-Each channel represents a platform (YouTube, GitHub, V2EX, ...) and declares:
+Each channel represents a platform (YouTube, GitHub, Reddit, ...) and declares:
   - can_handle(url) → does this URL belong to this platform? (used by `read`)
   - level → "default" / "optional" / "experimental"
   - actions → unified actions (`agent-reach <channel> <action>`), each with an
@@ -53,7 +53,7 @@ class Channel(ABC):
     """Base class for all channels."""
 
     name: str = ""                    # e.g. "youtube"
-    description: str = ""             # e.g. "YouTube 视频和字幕"
+    description: str = ""             # e.g. "YouTube videos and subtitles"
 
     #: "default" / "optional" / "experimental".
     level: str = ""

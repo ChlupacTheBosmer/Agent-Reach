@@ -5,7 +5,6 @@ import pytest
 
 from agent_reach.backends.opencli import _opencli_error, opencli_call
 from agent_reach.channels.base import Action, Channel, Param
-from agent_reach.channels.boss import BossChannel
 from agent_reach.runtime import manage, state
 from agent_reach.runtime.dispatch import run_action
 from agent_reach.runtime.result import ReachError
@@ -15,8 +14,7 @@ from agent_reach.runtime.run import CommandFailed
 @pytest.mark.parametrize(
     "message,code",
     [
-        ("您的环境存在异常，请重新登录", "PLATFORM_BLOCKED"),
-        ("Boss rejected the current browser environment", "PLATFORM_BLOCKED"),
+        ("The site rejected the current browser environment", "PLATFORM_BLOCKED"),
         ("HTTP 429", "RATE_LIMITED"),
         ("please login", "NEED_LOGIN"),
     ],
@@ -30,7 +28,7 @@ def test_opencli_never_retries_navigation(monkeypatch):
     run = Mock(side_effect=CommandFailed("UPSTREAM_BROKEN", "failed", stderr="Navigation rejected"))
     monkeypatch.setattr("agent_reach.runtime.run.run_cmd", run)
     with pytest.raises(ReachError):
-        opencli_call("boss", ["search", "Python"], timeout=1)
+        opencli_call("reddit", ["search", "Python"], timeout=1)
     assert run.call_count == 1
 
 
@@ -80,24 +78,6 @@ def test_blocking_errors_never_switch_backend(code):
     assert len(result["meta"]["attempts"]) == 1
 
 
-def test_boss_native_cdp_maps_results(monkeypatch):
-    import json
-    ch = BossChannel()
-    assert ("boss-agent-cli", "_cli_search") in ch.actions[0].backends
-    monkeypatch.setattr("agent_reach.runtime.onboarding.require_boss_cdp", lambda: "http://127.0.0.1:9222")
-    monkeypatch.setattr("agent_reach.channels.boss.resolve", lambda _: "/test/bin/boss")
-    calls = []
-    def run(argv, **kwargs):
-        calls.append(argv)
-        return json.dumps({"ok": True, "data": [{"title": "Engineer", "company": "Company", "job_id": "test"}]})
-    monkeypatch.setattr("agent_reach.channels.boss.run_cmd", run)
-    out = run_action(ch, "search", {"query": "Python", "limit": 1}, only_backend="boss-agent-cli")
-    assert out["ok"] and out["items"][0]["author"] == "Company"
-    payload = json.loads(calls[0][-1])
-    assert payload["cdp_url"] == "http://127.0.0.1:9222"
-    assert calls[0][1].endswith("boss_native.py")
-
-
 @pytest.mark.parametrize("timeout", [0, -1, float("inf"), float("nan")])
 def test_invalid_budget_cannot_start_work(timeout):
     assert (
@@ -139,16 +119,6 @@ def test_search_checks_stop_after_platform_block(monkeypatch):
     assert len(result["results"]) == 1
 
 
-
-
-def test_boss_native_risk_stops_without_retry(monkeypatch):
-    monkeypatch.setattr("agent_reach.runtime.onboarding.require_boss_cdp", lambda: "http://127.0.0.1:9222")
-    monkeypatch.setattr("agent_reach.channels.boss.resolve", lambda _: "/test/bin/boss")
-    run = Mock(return_value=json.dumps({"ok": False, "error": {"code": "ACCOUNT_RISK", "message": "environment risk code 37"}}))
-    monkeypatch.setattr("agent_reach.channels.boss.run_cmd", run)
-    out = run_action(BossChannel(), "search", {"query": "Python"})
-    assert out["error"]["code"] == "PLATFORM_BLOCKED"
-    assert run.call_count == 1
 
 
 def test_failed_backend_is_remembered_and_explicit_diagnostic_recovers():

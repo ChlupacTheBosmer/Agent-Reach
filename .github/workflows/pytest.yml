@@ -88,15 +88,13 @@ jobs:
           assert not dupes, f"duplicate entries in wheel: {dupes}"
           for path in (
               "agent_reach/skill/SKILL.md",
-              "agent_reach/skill/SKILL_en.md",
               "agent_reach/skill/references/sessions.md",
               "agent_reach/skill/references/maintenance.md",
               "agent_reach/skill/references/capabilities.md",
           ):
               assert path in names, f"{path} missing from wheel"
-          assert "agent_reach/channels/xiaoyuzhou.py" in names
-          assert "agent_reach/scripts/transcribe_xiaoyuzhou.sh" in names
-          for retired in ("agent_reach/mcp_server.py", "agent_reach/runtime/ask.py",
+          for retired in ("agent_reach/channels/xiaoyuzhou.py", "agent_reach/channels/bilibili.py",
+                          "agent_reach/skill/SKILL_en.md", "agent_reach/mcp_server.py", "agent_reach/runtime/ask.py",
                           "agent_reach/backends/cloak_worker.py", "agent_reach/runtime/opencli_compat.py"):
               assert retired not in names, f"retired module remains in wheel: {retired}"
           print(f"wheel OK: {len(names)} entries, no duplicates, data files present")

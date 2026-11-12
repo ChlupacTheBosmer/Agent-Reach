@@ -45,7 +45,7 @@ HELP = """agent-reach — internet access for AI agents (all output is JSON)
 
 For agents:
   agent-reach channels                    list channels, actions, params
-  agent-reach <channel> <action> [args]   e.g. agent-reach bilibili search python
+  agent-reach <channel> <action> [args]   e.g. agent-reach youtube search python
   agent-reach read <url>                  read a link with the matching channel
   Search/read try declared public web routes first; --backend selects a site tool
   --backend public-web                  public access only; no browser fallback
@@ -317,12 +317,12 @@ def _cmd_management(head: str, args: Sequence[str]) -> int:
             try:
                 result = manage.setup()
             except ReachError as err:
-                sys.stdout.write(f"安装未完成：{err.code} {err.message}\n{err.hint or ''}\n")
+                sys.stdout.write(f"Installation incomplete: {err.code} {err.message}\n{err.hint or ''}\n")
                 return 1
             sys.stdout.write(result['installation_report']['markdown'])
             report = result['installation_report']
             if report.get('path'):
-                sys.stdout.write(f"\n完整报告已保存：{report['path']}\n")
+                sys.stdout.write(f"\nFull report saved: {report['path']}\n")
             if report.get('write_error'):
                 sys.stdout.write(f"\n{report['write_error']}\n")
             return 0 if all(row['ok'] for row in result['default_channels']) else 1

@@ -9,7 +9,7 @@ from pathlib import Path
 parser = argparse.ArgumentParser()
 parser.add_argument('--cli', default='agent-reach')
 parser.add_argument('--out', type=Path, required=True)
-parser.add_argument('--channels', nargs='+', default=['github','twitter','youtube','bilibili','xiaohongshu','linkedin','boss','xueqiu','web'])
+parser.add_argument('--channels', nargs='+', default=['github','twitter','youtube','reddit','linkedin','web'])
 args = parser.parse_args()
 args.out.mkdir(parents=True, exist_ok=True, mode=0o700)
 report = {'started': datetime.datetime.now(datetime.timezone.utc).isoformat(), 'platform': platform.platform(), 'scope': 'search/jobs only', 'results': []}

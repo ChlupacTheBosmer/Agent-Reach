@@ -2,7 +2,7 @@
 """Cross-channel backends.
 
 A backend here is an upstream runtime that serves MULTIPLE channels
-(e.g. OpenCLI covers xiaohongshu/reddit/twitter/facebook/instagram through
+(e.g. OpenCLI covers reddit/twitter/facebook/instagram/linkedin through
 the Agent Reach browser).
 """
 

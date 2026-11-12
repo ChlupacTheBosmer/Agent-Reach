@@ -23,7 +23,12 @@ from agent_reach.utils.paths import home_dir
 from . import state, tools, update_notice
 from .result import BAD_INPUT, NEED_SETUP, UPSTREAM_BROKEN, ReachError
 
-REPO = update_notice.REPO
+REPO = update_notice.REPO  # upstream: release notices only
+#: This fork. It never installs upstream code by itself: upstream releases are merged into the
+#: fork, reviewed, and installed at a pinned commit (see FORK.md).
+FORK_REPO = "ChlupacTheBosmer/Agent-Reach"
+FORK_UPDATE_HINT = ("Upstream Agent Reach {latest} is available. This fork does not self-update: merge it into the fork "
+                    "as described in FORK.md, review it, then reinstall the fork at the reviewed commit.")
 CHECK_FRESH_SECONDS = 24 * 3600
 
 #: Machine prerequisites a channel may list in `prereqs` (keys of tools.TOOLS).
@@ -274,7 +279,7 @@ def _install_channel(ch, *, allow_upgrade: bool = False) -> List[dict]:
 
 def _sentence(text: str) -> str:
     text = text.strip()
-    return text if text.endswith((".", "。")) else text + "."
+    return text if text.endswith(".") else text + "."
 
 
 def _next_step(ch) -> Optional[str]:
@@ -404,25 +409,16 @@ def skill_dir() -> Path:
     return home_dir() / ".agents" / "skills" / SKILL_NAME
 
 
-def _skill_lang() -> str:
-    for var in ("AGENT_REACH_LANG", "LC_ALL", "LC_MESSAGES", "LANG"):
-        v = os.environ.get(var, "").strip().lower()
-        if v.startswith("en"):
-            return "en"
-    return "zh"
-
-
 def render_skill(lang: Optional[str] = None) -> str:
     from importlib.resources import files
 
-    lang = lang or _skill_lang()
-    template = files("agent_reach").joinpath("skill").joinpath("SKILL_en.md" if lang == "en" else "SKILL.md").read_text("utf-8")
+    template = files("agent_reach").joinpath("skill").joinpath("SKILL.md").read_text("utf-8")
     labels = {"default": "default", "optional": "optional", "experimental": "experimental"}
     rows = ["| channel | level | actions | login |", "|---|---|---|---|"]
     for ch in _channels():
         login = f"`agent-reach login {ch.name}`" if _has_login(ch) else "-"
         if ch.name == "reddit":
-            login = "浏览器路径按需" if lang == "zh" else "Browser path only, if required"
+            login = "Browser path only, if required"
         rows.append(f"| {ch.name} | {labels[ch.level]} | {', '.join(a.name for a in ch.actions)} | {login} |")
     return template.replace("{{CHANNEL_TABLE}}", "\n".join(rows)).replace("{{VERSION}}", __version__)
 
@@ -605,10 +601,8 @@ def _skill_uninstall_targets() -> List[Path]:
 # ── setup / migrate ──
 
 #: 1.5 config keys and CLI tools that show which channels the user relied on.
-_LEGACY_KEYS = {"twitter_auth_token": "twitter", "twitter_ct0": "twitter", "xueqiu_cookie": "xueqiu",
-                "xhs_cookie": "xiaohongshu"}
-_LEGACY_COMMANDS = {"twitter": "twitter", "xhs": "xiaohongshu", "opencli": "xiaohongshu", "rdt": "reddit",
-                    "bili": "bilibili", "boss": "boss"}
+_LEGACY_KEYS = {"twitter_auth_token": "twitter", "twitter_ct0": "twitter"}
+_LEGACY_COMMANDS = {"twitter": "twitter", "rdt": "reddit"}
 #: 1.5 channels that 1.6 no longer has; the report says what replaces them.
 RETIRED_CHANNELS = ("rss", "exa_search")
 
@@ -708,7 +702,7 @@ def setup() -> dict:
         report["path"] = str(atomic_write_private_text(state.root() / "installation-report.md", markdown))
     except (OSError, PrivatePathError):
         # The receipt remains in stdout even if its local copy cannot be saved.
-        report["write_error"] = "安装报告未能保存；完整表格仍在 installation_report.markdown。"
+        report["write_error"] = "The installation report could not be saved; the full table is still in installation_report.markdown."
     result["installation_report"] = report
     if migration:
         state.mutate(lambda saved: saved.__setitem__("migration_reported", True))
@@ -758,7 +752,7 @@ def install_method() -> str:
 
 
 def _source(version: str) -> str:
-    return f"https://github.com/{REPO}/archive/refs/tags/v{version}.zip"
+    return f"https://github.com/{FORK_REPO}/archive/refs/tags/v{version}.zip"
 
 
 def upgrade_command(version: str) -> List[str]:
@@ -874,34 +868,18 @@ def _move_to_uv(info: dict) -> dict:
 
 
 def update(check_only: bool = False) -> dict:
-    """Upgrade Agent Reach when a release is newer, then upgrade every added channel's tools."""
+    """Report a newer upstream release (this fork never installs it), then upgrade every added channel's tools."""
     info = update_check()
     if check_only:
         return info
     method = install_method()
     if method == "other":
         return _move_to_uv(info)
-    if info["update_available"] and method != "editable":
-        cmd = upgrade_command(info["latest"])
-        run = [tools.resolve("uv") or cmd[0], *cmd[1:]]
-        try:
-            proc = subprocess.run(run, capture_output=True, text=True, timeout=900)
-        except FileNotFoundError:
-            raise ReachError(NEED_SETUP, "uv is not on PATH",
-                             hint="Install uv: https://docs.astral.sh/uv/getting-started/installation/") from None
-        if proc.returncode != 0:
-            raise ReachError(UPSTREAM_BROKEN, f"upgrade failed: {proc.stderr.strip()[-300:]}",
-                             hint=f"Run manually: {' '.join(cmd)}")
-        exe = shutil.which("agent-reach") or sys.argv[0]
-        out = subprocess.run([exe, "update", "--sync-only"], capture_output=True, text=True, timeout=1800)
-        try:
-            synced = json.loads(out.stdout.strip().split("\n")[-1]).get("result") or {}
-        except (ValueError, IndexError):
-            synced = {"raw": out.stdout[-500:]}
-        return {**info, "upgraded": True, "method": method, "sync": synced,
-                "user_actions": synced.get("user_actions", [])}
     synced = sync()
-    return {**info, "upgraded": False, "method": method, "sync": synced, "user_actions": synced["user_actions"]}
+    actions = list(synced["user_actions"])
+    if info["update_available"] and method != "editable":
+        actions.insert(0, FORK_UPDATE_HINT.format(latest=info["latest"]))
+    return {**info, "upgraded": False, "method": method, "sync": synced, "user_actions": actions}
 
 
 # ── uninstall ──

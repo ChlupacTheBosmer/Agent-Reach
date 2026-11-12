@@ -3,7 +3,7 @@
 1.5 was installed with pipx or into `~/.agent-reach-venv`. After the user moves to
 the uv install, those copies would keep an old `agent-reach` on PATH, and a later
 `pipx upgrade-all` could put 1.5 back. Only Agent Reach's own package is removed;
-the user's other tools (twitter-cli, bili, ...) and data are never touched.
+the user's other tools (twitter-cli, rdt, ...) and data are never touched.
 """
 
 from __future__ import annotations

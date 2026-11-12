@@ -31,11 +31,11 @@ def test_run_cmd_bypasses_npm_shim_for_windows_metacharacters(tmp_path, monkeypa
             return b"[]", b""
 
     monkeypatch.setattr(run.subprocess, "Popen", Process)
-    url = "https://www.xiaohongshu.com/search_result/1?xsec_token=abc&xsec_source="
-    result = run.run_cmd([str(shim), "xiaohongshu", "read", url, "-f", "json"], timeout=1)
+    url = "https://www.instagram.com/explore/search/keyword/?q=abc&src=typed_query&x="
+    result = run.run_cmd([str(shim), "instagram", "read", url, "-f", "json"], timeout=1)
 
     assert result == "[]"
-    assert calls == [[str(node), str(script), "xiaohongshu", "read", url, "-f", "json"]]
+    assert calls == [[str(node), str(script), "instagram", "read", url, "-f", "json"]]
 
 
 def test_run_cmd_rejects_metacharacters_for_unknown_batch_shim(tmp_path, monkeypatch):
@@ -69,8 +69,8 @@ _CMD_SHIM = (
 )
 
 TRICKY_ARGS = [
-    "https://www.xiaohongshu.com/explore/66f1a2b3000000001e02c3d4"
-    "?xsec_token=ABx9%2Bk%3D&xsec_source=pc_search",
+    "https://www.instagram.com/p/C1a2b3c4d5e/"
+    "?igsh=ABx9%2Bk%3D&utm_source=ig_web_copy_link",
     "a|b<c>d^e",
     '"quoted" (paren) !bang! %PATH%',
     "with space",

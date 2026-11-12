@@ -5,7 +5,7 @@ Run on the maintainer's machine after the needed logins/keys are in place:
 
     python scripts/record_release_acceptance.py                 # all channels
     python scripts/record_release_acceptance.py --only reddit   # recheck some, keep the rest
-    python scripts/record_release_acceptance.py --episode <xiaoyuzhou episode URL>
+    python scripts/record_release_acceptance.py
 
 Only codes, counts and backends are written; no queries' results, cookies or paths.
 """
@@ -34,10 +34,7 @@ FROM_SEARCH = {
     ("twitter", "thread"): ("search", "target", None),
     ("youtube", "transcribe"): (None, None, {"target": "https://www.youtube.com/watch?v=jNQXAC9IVRw"}),
     ("reddit", "read"): ("search", "target", None),
-    ("xiaohongshu", "read"): ("search", "target", None),
-    ("xiaohongshu", "comments"): ("search", "target", None),
     ("linkedin", "read"): ("jobs", "target", None),
-    ("boss", "read"): ("search", "target", None),
 }
 
 
@@ -65,7 +62,6 @@ def _run(args) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--only", nargs="*", default=None, help="channels to (re)check; others keep their rows")
-    parser.add_argument("--episode", default="", help="a public Xiaoyuzhou episode URL for transcribe")
     parser.add_argument("--out", default=str(DEFAULT_OUT))
     ns = parser.parse_args()
 
@@ -96,14 +92,12 @@ def main() -> int:
             params = dict(action.live_test or {})
             if not action.live_test:
                 source, key, fixed = FROM_SEARCH.get((ch.name, action.name), (None, None, None))
-                if (ch.name, action.name) == ("xiaoyuzhou", "transcribe"):
-                    fixed = {"target": ns.episode} if ns.episode else None
                 if fixed:
                     params = dict(fixed)
                 elif source and first_url.get(source):
                     params = {key: first_url[source]}
                 else:
-                    reason = "needs --episode" if ch.name == "xiaoyuzhou" else f"no {source} result to read"
+                    reason = f"no {source} result to read"
                     pending.append({"channel": ch.name, "action": action.name, "reason": reason})
                     print(f"{ch.name}/{action.name}: skipped ({reason})")
                     continue

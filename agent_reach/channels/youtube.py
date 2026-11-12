@@ -91,7 +91,7 @@ def vtt_to_text(vtt: str) -> str:
 
 class YouTubeChannel(Channel):
     name = "youtube"
-    description = "YouTube 视频和字幕"
+    description = "YouTube videos and subtitles"
 
     level = "default"
     #: transcribe re-encodes and chunks audio

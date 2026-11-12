@@ -1,12 +1,14 @@
 
 <h1 align="center">👁️ Agent Reach</h1>
 
+> This is a fork of [Panniantong/Agent-Reach](https://github.com/Panniantong/Agent-Reach): English only, no Chinese platforms, plus read-only access to your saved posts and bookmarks. See [FORK.md](FORK.md) for the differences and how upstream updates are merged.
+
 <p align="center">
-  <strong>让 AI Agent 够得着它自己上不去的互联网</strong>
+  <strong>Let your AI agent reach the parts of the internet it can't reach on its own</strong>
 </p>
 
 <p align="center">
-  登录墙后的平台、视频里的内容、中文平台、干净的结构化数据，一条命令拿到
+  Login-walled platforms, what's inside videos, your saved posts and bookmarks, clean structured data. One command.
 </p>
 
 <p align="center">
@@ -21,50 +23,50 @@
 </p>
 
 <p align="center">
-  <a href="#快速上手">快速开始</a> · <a href="docs/README_en.md">English</a>
+  <a href="#quick-start">Quick Start</a>
 </p>
 
 <p align="center">
-  <a href="https://discord.gg/NSZz22R39"><img src="https://img.shields.io/badge/Discord-加入社区-5865F2?style=for-the-badge&amp;logo=discord&amp;logoColor=white" alt="加入 Agent Reach Discord 社区"></a>
+  <a href="https://discord.gg/NSZz22R39"><img src="https://img.shields.io/badge/Discord-Join%20us-5865F2?style=for-the-badge&amp;logo=discord&amp;logoColor=white" alt="Join the Agent Reach Discord community"></a>
 </p>
 
 <p align="center">
-  💬 有问题、想要新平台、或者想看看别人怎么用？来 <a href="https://discord.gg/NSZz22R39">Discord</a> 聊聊。
+  💬 Questions, a platform you want added, or curious how others use it? Come chat on <a href="https://discord.gg/NSZz22R39">Discord</a>.
 </p>
 
 ---
 
-## ❤️赞助商
+## ❤️ Sponsors
 
-> [想出现在这里？](mailto:pnt01@foxmail.com)
+> [Want to appear here?](mailto:pnt01@foxmail.com)
 
 <details>
-<summary>点击展开</summary>
+<summary>Click to expand</summary>
 
 <table>
 <tr>
-<td width="180" align="center"><a href="https://get.brightdata.com/bdenai"><img src="docs/assets/sponsors/brightdata.png" alt="Bright Data 亮数据" width="150"></a></td>
-<td><a href="https://get.brightdata.com/bdenai">Bright Data 亮数据</a> | 全球领先的数据采集基础设施。Scraper Studio 智能爬取器让你用自然语言一键生成爬虫，无需写代码；Unlocker 网站解锁器自动绕过反爬虫机制，轻松采集 Amazon、Google、LinkedIn、TikTok 等复杂网站数据。内置 350+ 现成 API 集成，覆盖电商、社交、搜索、地图等全品类数据源，直接调用开箱即用。1.5 亿+ 全球真实住宅 IP 保障采集稳定性。每月免费 5,000 次请求，<a href="https://get.brightdata.com/bdenai">立即免费注册</a>。</td>
+<td width="180" align="center"><a href="https://get.brightdata.com/bdenai"><img src="docs/assets/sponsors/brightdata.png" alt="Bright Data" width="150"></a></td>
+<td><a href="https://get.brightdata.com/bdenai">Bright Data</a> | The world's leading web data infrastructure. Scraper Studio builds a scraper from a plain-language description, no code needed; Web Unlocker gets past anti-bot defenses so you can collect data from hard sites like Amazon, Google, LinkedIn and TikTok. 350+ ready-made API integrations cover e-commerce, social, search, maps and more, ready to call out of the box. 150M+ real residential IPs worldwide keep collection stable. 5,000 free requests every month. <a href="https://get.brightdata.com/bdenai">Sign up free</a>.</td>
 </tr>
 <tr>
 <td width="180" align="center"><a href="https://www.rapidproxy.io/?ref=pann"><img src="docs/assets/sponsors/rapidproxy.png" alt="Rapidproxy" width="150"></a></td>
-<td><a href="https://www.rapidproxy.io/?ref=pann">RapidProxy</a> 是专为开发者打造的数据采集代理解决方案，提供稳定可靠的住宅代理服务。拥有 9000 万+ 全球住宅 IP，覆盖 200+ 国家和地区，支持智能轮换与精准地理定位，可用于网页抓取、AI 数据采集与训练、SEO 监控、电商数据分析等场景，帮助提升数据采集效率与稳定性。支持 Playwright、Selenium、Puppeteer 等主流自动化框架，流量永久有效，价格低至 $0.55/GB，<a href="https://www.rapidproxy.io/?ref=pann">支持免费测试</a>。</td>
+<td><a href="https://www.rapidproxy.io/?ref=pann">RapidProxy</a> is a data-collection proxy service built for developers, with stable, reliable residential proxies. 90M+ residential IPs worldwide cover 200+ countries and regions, with smart rotation and precise geo-targeting, for web scraping, AI data collection and training, SEO monitoring, e-commerce analytics and more. Works with Playwright, Selenium, Puppeteer and other popular automation frameworks. Traffic never expires, prices start at $0.55/GB, and <a href="https://www.rapidproxy.io/?ref=pann">free trials are available</a>.</td>
 </tr>
 <tr>
 <td width="180" align="center"><a href="https://www.browseract.ai/Agent"><img src="docs/assets/sponsors/browseract.png" alt="BrowserAct" width="150"></a></td>
-<td><a href="https://www.browseract.ai/Agent">BrowserAct</a> 支持从 Amazon、LinkedIn、X、Google Maps 等复杂网站提取你需要的任意数据。你只需用自然语言描述抓取需求，Agent 就会基于真实浏览器自动探索并测试页面流程，生成可靠、可复用的数据采集 Bot，并返回结构化结果。无需手动构建爬虫，无需编写代码。BrowserAct 内置隐身浏览、验证码处理和高质量住宅代理，帮助你更稳定地完成复杂网页数据采集。新用户注册即送 1000 积分，<a href="https://www.browseract.ai/Agent">立即免费试用</a>。</td>
+<td><a href="https://www.browseract.ai/Agent">BrowserAct</a> extracts any data you need from complex websites such as Amazon, LinkedIn, X, and Google Maps. Simply describe your extraction request in natural language, and its Agent will explore and test page flows in a real browser, generate a reliable reusable data-collection Bot, and return structured results. There is no need to build a scraper or write code. Built-in stealth browsing, CAPTCHA handling, and high-quality residential proxies help make complex web data extraction more reliable. New users receive 1,000 credits upon registration. <a href="https://www.browseract.ai/Agent">Try it free now</a>.</td>
 </tr>
 <tr>
-<td width="180" align="center"><a href="https://www.tencentcloud.com/act/pro/intl-openclaw?referral_code=G76Y819A&amp;lang=zh&amp;pg="><img src="docs/assets/sponsors/tencent-cloud.svg" alt="腾讯云 OpenClaw" width="150"></a></td>
-<td>在腾讯云 Lighthouse 秒级部署 OpenClaw 全能助手，可通过对话丝滑接入 Agent Reach，给你的 OpenClaw 一键装上互联网能力。</td>
+<td width="180" align="center"><a href="https://www.tencentcloud.com/act/pro/intl-openclaw?referral_code=G76Y819A&amp;lang=en&amp;pg="><img src="docs/assets/sponsors/tencent-cloud.svg" alt="OpenClaw on Tencent Cloud" width="150"></a></td>
+<td>Deploy OpenClaw on Tencent Cloud Lighthouse in seconds, connect Agent Reach through chat, and add internet access to your OpenClaw setup.</td>
 </tr>
 <tr>
 <td width="180" align="center"><a href="https://www.coreclaw.com/?utm_source=github&amp;utm_medium=referral&amp;utm_campaign=Reach&amp;utm_term=Reach&amp;utm_id=Reach"><img src="docs/assets/sponsors/coreclaw.png" alt="CoreClaw" width="150"></a></td>
-<td><a href="https://www.coreclaw.com/?utm_source=github&amp;utm_medium=referral&amp;utm_campaign=Reach&amp;utm_term=Reach&amp;utm_id=Reach">CoreClaw</a> | 网页抓取平台与现成数据采集工具，CoreClaw 提供 100+ 现成数据采集工具，支持 Amazon、TikTok、Google Maps、Instagram、Facebook、YouTube 等平台，无需代码，支持 JSON/CSV 导出，仅对成功结果计费。<a href="https://www.coreclaw.com/?utm_source=github&amp;utm_medium=referral&amp;utm_campaign=Reach&amp;utm_term=Reach&amp;utm_id=Reach">免费$3测试！</a></td>
+<td><a href="https://www.coreclaw.com/?utm_source=github&amp;utm_medium=referral&amp;utm_campaign=Reach&amp;utm_term=Reach&amp;utm_id=Reach">CoreClaw</a> | Web scraping platform and ready-made data collection tools. CoreClaw provides 100+ ready-made data collection tools for Amazon, TikTok, Google Maps, Instagram, Facebook, YouTube, and more. No code required, with JSON/CSV exports and billing only for successful results. <a href="https://www.coreclaw.com/?utm_source=github&amp;utm_medium=referral&amp;utm_campaign=Reach&amp;utm_term=Reach&amp;utm_id=Reach">Free $3 trial!</a></td>
 </tr>
 <tr>
-<td width="180" align="center"><a href="https://www.ucloud.cn/site/active/astraflow?ytag=geo_waituo_Agent"><img src="docs/assets/sponsors/astraflow.png" alt="星图 AstraFlow" width="150"></a></td>
-<td><a href="https://www.ucloud.cn/site/active/astraflow?ytag=geo_waituo_Agent">优刻得星图astraflow大模型</a>，支持200+模型一键调用：内置 Kimi K3、DeepSeek V4/V3、Qwen 3、GLM5.2、happyhorse等全球领先开源大模型，无需自训，开箱即用</td>
+<td width="180" align="center"><a href="https://www.ucloud.cn/site/active/astraflow?ytag=geo_waituo_Agent"><img src="docs/assets/sponsors/astraflow.png" alt="AstraFlow" width="150"></a></td>
+<td><a href="https://www.ucloud.cn/site/active/astraflow?ytag=geo_waituo_Agent">AstraFlow ModelVerse</a> provides one-click access to 200+ models, including leading open-source models such as Kimi K3, DeepSeek V4/V3, Qwen 3, GLM5.2, and happyhorse. No training required—ready to use out of the box.</td>
 </tr>
 </table>
 
@@ -72,181 +74,167 @@
 
 ---
 
-## 为什么需要 Agent Reach？
+## Why Agent Reach?
 
-**Agent Reach 让你的 Agent 真正连上互联网，用上它自己够不着的平台和能力。**
+**Agent Reach connects your agent to the internet for real, giving it the platforms and abilities it can't reach on its own.**
 
-Claude Code、Codex、Hermes Agent、OpenClaw 这类 CLI Agent 自带搜索和网页读取，但下面这些它们基本够不着：
+CLI agents such as Claude Code, Codex, Hermes Agent and OpenClaw come with web search and page fetching, but they mostly can't reach:
 
-- **要登录才能用的功能**：在小红书搜笔记、在 X 查账号动态、读职位详情等。
-- **视频里的内容**：B站和 YouTube 的字幕，以及 YouTube 视频、小宇宙播客的语音转文字。
-- **中文平台**：B站、小红书、V2EX、雪球，通用搜索覆盖很差。
-- **干净的结构化数据**：雪球行情、V2EX 帖子和回复、GitHub 仓库和 issue，拿到的是整理好的内容。
+- **Features that need a login**: listing an X account's posts, searching Reddit, reading LinkedIn job details or Instagram posts.
+- **Your own saved items**: your X bookmarks, your saved Reddit posts and your saved Instagram posts (read-only).
+- **What's inside video**: YouTube subtitles, plus speech-to-text for YouTube videos.
+- **Clean structured data**: GitHub repos, issues and PRs with comments, already cleaned up.
 
-Agent Reach 把这些平台背后的工具替你装好、测好，Agent 一条命令就能用：
+Agent Reach installs and tests the tools behind these platforms for you, so your agent can use them with one command:
 
 ```bash
-agent-reach channels                          # 有哪些渠道、每个渠道能做什么
-agent-reach bilibili search "大模型"           # agent-reach <渠道> <动作> [参数]
-agent-reach read https://www.v2ex.com/t/123   # 按链接自动选渠道
+agent-reach channels                          # which channels exist and what each can do
+agent-reach youtube search "LLM agents"       # agent-reach <channel> <action> [args]
+agent-reach read https://github.com/Panniantong/Agent-Reach   # picks the channel from the link
 ```
 
-### ✅ 在你用之前，你可能想知道
+### ✅ Before you start, you might want to know
 
-- **适用于哪些 Agent？** 一切 Agent 都能用。
-- **会碰我的浏览器和账号吗？** 要登录的平台用 Agent Reach 自己的专用浏览器，在后台运行、不弹窗。第一次用某个网站时，会把你 Chrome 里这个网站的登录复制一份过去，原浏览器不变，不读密码库。复制过来的通常是主账号，建议换成小号，做法见下面的"安全性"。详见[会话配置](agent_reach/skill/references/sessions.md)。
+- **Which agents?** Every agent.
+- **Does it touch my browser and accounts?** Login channels use Agent Reach's own browser, in the background without windows. The first time a site is used, that site's login is copied over from your Chrome; your browser is not changed and passwords are never read. The copied login is usually your main account, so switching to a secondary one is recommended, see Security below.
 
 ---
 
-## 支持的平台
+## Supported Platforms
 
-下表是当前版本的情况。
+This table reflects the current release.
 
-| 渠道 | 等级 | 能做什么 | 需要什么 |
+| Channel | Level | What it does | Needs |
 |---|---|---|---|
-| bilibili | 默认 | 搜索、视频信息、热门、字幕 | 无；字幕需要登录（扫码） |
-| v2ex | 默认 | 热门、节点、帖子和回复、用户 | 无 |
-| github | 默认 | 搜仓库、读仓库/README、读 issue 和 PR（含评论） | 无 |
-| youtube | 默认 | 视频信息、搜索、字幕、语音转文字 | 无；转文字需要 Groq 或 OpenAI Key |
-| web | 默认 | 网页搜索、网页阅读（保底） | 无 |
-| xiaohongshu | 可选 | 搜笔记、读正文、看评论 | 登录 |
-| xueqiu | 可选 | 实时行情、搜股票、热帖、热股 | 行情不用登录；热帖、热股要登录 |
-| boss | 可选 | 搜职位和 JD | 登录 |
-| xiaoyuzhou | 可选 | 播客转文字 | Groq Key |
-| linkedin | 可选 | 搜职位、读职位详情 | 公开职位不用登录；站内搜索要登录 |
-| reddit | 可选 | 搜帖子、读正文、看评论、看版块 | 登录 |
-| twitter | 实验 | 搜推文、用户资料、用户推文、读推文串 | 登录 |
-| facebook | 实验 | 搜索、主页资料 | 登录 |
-| instagram | 实验 | 搜用户、主页资料、用户帖子 | 登录 |
+| github | default | search repos, read a repo/README, read issues and PRs with comments | nothing |
+| youtube | default | video info, search, subtitles, speech-to-text | nothing; speech-to-text needs a Groq or OpenAI key |
+| web | default | web search, page reading (fallback) | nothing |
+| reddit | optional | search posts, read text/comments, browse a subreddit, your saved posts (`reddit saved`) | login |
+| linkedin | optional | search jobs, read job details | public jobs need nothing; in-site search needs a login |
+| twitter | experimental | search tweets, profiles, user tweets, threads, your bookmarks (`twitter bookmarks`) | login |
+| facebook | experimental | search, profiles | login |
+| instagram | experimental | user search, profiles, user posts, your saved posts (`instagram saved`) | login |
 
-- **默认**：装好就能用；不想要也可以去掉，以后更新不会再加回来。
-- **可选**：说一句"帮我加上 XX"就开启，需要的软件会自动装好。
-- **实验**：能用，但平台反爬更严，可能随时失效。
+Saved posts and bookmarks are read-only and only ever your own: `agent-reach instagram saved [--limit N] [--collection NAME]`, `agent-reach twitter bookmarks [--limit N]`, `agent-reach reddit saved [--limit N]`. LinkedIn has no saved-items action.
+
+- **default**: works right after install; you can remove one, and updates won't add it back.
+- **optional**: say "add Reddit" to turn it on; whatever it needs is installed for you.
+- **experimental**: works, but the platform fights automation harder and it can break at any time.
 
 ---
 
-## 快速上手
+## Quick Start
 
-把这句话发给你的 Agent：
+Send this to your agent:
 
 ```
-帮我安装 Agent Reach：https://raw.githubusercontent.com/Panniantong/Agent-Reach/main/docs/install.md
+Install Agent Reach: https://raw.githubusercontent.com/ChlupacTheBosmer/Agent-Reach/custom/docs/install.md
 ```
 
-无论是安装还是升级，都只需要这一条命令就行了。
+Whether you're installing or upgrading, this one command is all you need.
 
-剩下的 Agent 自己做完。过程中你可能会被问到：
+The agent does the rest. Along the way you may be asked to:
 
-- **允许它执行命令**：如果 Agent 说自己不能运行命令，去它的设置里打开"允许执行命令"。
-- **装 uv**：uv 是一个安装命令行程序的小工具，不需要管理员密码。电脑上没有的话 Agent 会先装它，会跟你说一声。
-- **要不要加可选渠道**：装完后 Agent 会告诉你哪些已经能用（B站、V2EX、GitHub、YouTube、网页），以及还能加哪些。你选了再加，也可以以后随时说"帮我加上小红书"，一条命令就装好。
+- **Let it run commands**: if the agent says it can't run commands, turn on command execution in its settings.
+- **Allow installing uv**: uv is a small tool that installs command-line programs; no admin password needed. The agent installs it first if it's missing and tells you.
+- **Pick optional channels**: afterwards the agent tells you what works now (web, YouTube, GitHub) and what else you can add. Pick now, or later just say "add Reddit"; one command sets it up.
 
-关于登录：部分平台会直接复用你电脑上已有的登录。想换成某个特定账号（比如小号），跟 Agent 说一声就行。Agent 从不替你登录，也不会要你的密码。
+About logins: some platforms reuse the logins already on your computer. Want a specific account instead, such as a secondary one? Just tell your agent. The agent never logs in for you and never asks for your password.
 
-> ⚠️ PyPI 上叫 `agent-reach` 的包不是本项目，请勿从 PyPI 安装，只用 install.md 里的 GitHub 地址。
+> ⚠️ The PyPI package named `agent-reach` is NOT this project. Don't install it from PyPI; use the GitHub URL of this fork in install.md.
 
 ---
 
-## 装好之后怎么管
+## After Install: Managing It
 
-Agent Reach 装的所有东西（各渠道的工具、登录、设置）都放在你电脑上同一个文件夹里（`~/.agent-reach/`），不散落到别处。所以升级、管理、删除都很省事，一句话就行。
+Everything Agent Reach installs (each channel's tools, logins and settings) lives in one folder on your computer (`~/.agent-reach/`) instead of being scattered around. That makes upgrading, managing and removing it easy: one sentence does it.
 
-直接用大白话跟 Agent 说：
+Just tell your agent in plain words:
 
-| 你说 | 它会做什么 |
+| You say | What it does |
 |---|---|
-| "看看 Agent Reach 状态" | 告诉你每个渠道现在能不能用，哪些是上次还好、现在坏了 |
-| "加上小红书" / "去掉小红书" | 开启并装好它需要的一切 / 关掉它，清掉它的登录和专用工具 |
-| "小红书登录过期了" / "换个账号" / "退出登录" | 打开登录窗口，由你本人登录 / 清掉这个网站的登录 |
-| "升级 Agent Reach" | 一次更新程序和各渠道的工具，并告诉你还需要做什么 |
-| "卸载 Agent Reach" | 先列出要删的东西，你确认后再删 |
-| "让另一个 AI 也能用" | 给那个 AI 也放一份使用说明 |
+| "How is Agent Reach doing?" | tells you which channels work right now, and which worked before but broke since |
+| "Add Reddit" / "Remove Reddit" | turns it on and installs what it needs / turns it off and clears its login and private tools |
+| "My Reddit login expired" / "Switch accounts" / "Log out" | opens a login window where you sign in yourself / clears that site's login |
+| "Upgrade Agent Reach" | updates the program and every channel's tools in one go, and tells you anything left to do |
+| "Uninstall Agent Reach" | lists what would be removed first, and removes it once you confirm |
+| "Let my other AI use it too" | gives that AI its own copy of the instructions |
 
-出了问题，Agent 会告诉你是哪个平台、什么原因、下一步怎么做。常见问题见 [troubleshooting.md](docs/troubleshooting.md)。
+When something goes wrong, your agent tells you which platform, why, and what to do next. Common problems: [troubleshooting.md](docs/troubleshooting.md).
 
 ---
 
-## 设计理念
+## Design Philosophy
 
-### 🔌 每个平台 = 首选 + 备选的有序工具列表
+### 🔌 Every platform = an ordered list of tools (primary + fallbacks)
 
-每个平台的每个动作都有一个按顺序尝试的工具列表。比如读 B站视频先用 bili-cli，失败了自动换 B站公开接口；读网页先用 Jina Reader，再用 Exa。
+Each action on each platform has an ordered list of tools to try. Reading a web page tries Jina Reader first and falls back to Exa.
 
 ```mermaid
 flowchart LR
-    A[Agent] -->|agent-reach 渠道 动作| B[Agent Reach]
-    B --> C{按顺序尝试}
-    C -->|首选| D[上游工具 1]
-    C -->|失败时备选| E[上游工具 2]
-    D --> F[结果]
+    A[Agent] -->|agent-reach channel action| B[Agent Reach]
+    B --> C{try in order}
+    C -->|preferred| D[upstream tool 1]
+    C -->|fallback on failure| E[upstream tool 2]
+    D --> F[result]
     E --> F
     F --> A
 ```
 
-平台改版、工具失效是常态。换工具只是调整这个列表，Agent 的用法不变。
+Platforms change and tools break all the time. Switching tools only reorders that list; the way your agent uses Agent Reach stays the same.
 
 ---
 
-## 安全性
+## Security
 
-- **只读**：只搜索和读取，不发帖、不评论、不点赞、不私信。
-- **从不替你登录，也不要你的密码。** 部分平台会复用你电脑上已有的登录（只复制这一个网站，原浏览器不变）；确实需要重新登录时才打开专用窗口，由你本人完成。
-- **专用浏览器只对你这台电脑开放**，别的电脑连不上它。
-- **建议用小号登录。** 复用过来的通常是主账号，而平台可能限制自动访问的账号。想换成小号，跟 Agent 说一声就行。
-- **Key 不要发在聊天里**：在你自己的终端里运行 `agent-reach configure groq-key` 填写。
+- **Read-only**: it searches and reads, including your own saved posts and bookmarks; it never posts, comments, likes or sends messages.
+- **It never logs in for you or asks for your password.** Some platforms reuse a login already on your computer (that one site only, your browser unchanged); a login window opens only when you really need to sign in again, and you do it yourself.
+- **The dedicated browser is open to this computer only**; other machines can't connect to it.
+- **Use a secondary account.** The reused login is usually your main account, and platforms may restrict accounts used for automation. To switch, just tell your agent.
+- **Never paste keys into a chat**: run `agent-reach configure groq-key` in your own terminal to enter one.
 
-### 🗑️ 卸载
+### 🗑️ Uninstall
 
-跟 Agent 说"卸载 Agent Reach"。它会先列出要删的东西，你确认后再删。只删 Agent Reach 自己装的东西，你的其他文件和浏览器都不动。最后它会告诉你怎么删掉程序本身。
-
----
-
-## ⭐ 为什么值得 Star
-
-这个项目我自己每天在用，所以我会一直维护它。
-
-- 有新需求或者大家提了想要的渠道，我会陆续加上
-- 每个渠道我会尽量保证**能用、好用、免费**
-- 平台改了反爬或者 API 变了，我会想办法解决
-
-Star 一下，下次需要的时候能找到。⭐
+Tell your agent "Uninstall Agent Reach". It lists what would be removed first and removes it once you confirm. Only what Agent Reach installed is removed; your other files and browsers stay. At the end it tells you how to remove the program itself.
 
 ---
 
-## 致谢
+## ⭐ Why star it
 
-[OpenCLI](https://github.com/jackwener/opencli) · [bili-cli](https://github.com/public-clis/bilibili-cli) · [boss-agent-cli](https://github.com/can4hou6joeng4/boss-agent-cli) · [yt-dlp](https://github.com/yt-dlp/yt-dlp) · [Jina Reader](https://github.com/jina-ai/reader) · [Exa](https://exa.ai)
+I use this project every day myself, so I'll keep maintaining it.
 
-## 联系
+- When people ask for a new platform, I'll keep adding them
+- I try to keep every channel **working, easy to use and free**
+- When a platform changes its anti-bot rules or API, I'll find a way around it
+
+Star it so you can find it next time you need it. ⭐
+
+---
+
+## Credits
+
+[OpenCLI](https://github.com/jackwener/opencli) · [yt-dlp](https://github.com/yt-dlp/yt-dlp) · [Jina Reader](https://github.com/jina-ai/reader) · [Exa](https://exa.ai)
+
+## Contact (upstream author)
 
 - 📧 **Email:** pnt01@foxmail.com
 - 🐦 **Twitter/X:** [@Neo_Reidlab](https://x.com/Neo_Reidlab)
 
-## 业务合作 / 交流群
+> For bug reports and feature requests about this fork, please use [GitHub Issues](https://github.com/ChlupacTheBosmer/Agent-Reach/issues); for upstream ones, use [upstream Issues](https://github.com/Panniantong/Agent-Reach/issues).
 
-有相关合作，或者想加交流群，加我微信，或直接加入 Discord 社区：
+## No token or crypto affiliation
 
-<p align="center">
-  <img src="docs/wechat-group-qr.jpg" width="280" alt="WeChat QR">
-  &nbsp;&nbsp;
-  <a href="https://discord.gg/NSZz22R39"><img src="https://img.shields.io/badge/Discord-加入社区-5865F2?style=for-the-badge&amp;logo=discord&amp;logoColor=white" alt="加入 Agent Reach Discord 社区"></a>
-</p>
-
-> Bug 反馈和功能请求请用 [GitHub Issues](https://github.com/Panniantong/Agent-Reach/issues)，更容易跟踪。
-
-## 防骗提醒
-
-Agent Reach 没有官方代币、币、投资产品、领取手续费活动、钱包连接，也没有 Solana/Pump.fun 项目。任何借用 Agent Reach 名字、GitHub 地址或作者身份的加密项目都与本仓库无关，请勿据此连接钱包或领取任何费用。
+Agent Reach has no official token, coin, investment product, fee-claim program, wallet connection, or Solana/Pump.fun project. Any crypto project using the Agent Reach name, GitHub URL, or author identity is not affiliated with this repository. Do not connect a wallet or claim fees based on messages, posts, or links that say otherwise.
 
 ## License
 
 [MIT](LICENSE)
 
-## 友情链接
+## Friends
 
-[Agent Skills Hub](https://agentskillshub.top/) — 找 Claude 技能和 MCP 服务器，不用猜哪个安全：133,000+ 个条目全部安全分级、质量评分，每 8 小时刷新。
+[Agent Skills Hub](https://agentskillshub.top/) — Find Claude skills & MCP servers without guessing what's safe. Every one of 133,000+ entries is security-graded, quality-scored, and refreshed every 8 hours.
 
-[AtomGit 镜像](https://atomgit.com/qq_51337814/Agent-Reach) — Agent Reach 的 AtomGit 同步镜像，便于国内访问与克隆。
+[AtomGit mirror](https://atomgit.com/qq_51337814/Agent-Reach) — Synchronized AtomGit mirror for Agent Reach.
 
 ## Star History
 

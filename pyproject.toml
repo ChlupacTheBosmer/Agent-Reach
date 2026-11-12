@@ -1,7 +1,7 @@
 [project]
 name = "agent-reach"
 version = "1.6.1"
-description = "Internet access for AI agents: one CLI with JSON output to search and read the web, YouTube, GitHub, V2EX and more."
+description = "Internet access for AI agents: one CLI with JSON output to search and read the web, YouTube, GitHub, Reddit, X, Instagram and more."
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.10"
@@ -10,7 +10,6 @@ keywords = [
     "ai-agent", "llm-tools", "agent-infrastructure",
     "web-reader", "web-scraper", "search",
     "twitter-scraper", "reddit-scraper", "youtube-transcript",
-    "bilibili", "xiaohongshu",
     "ai-search", "cli", "automation",
     "claude-code", "cursor", "openai",
     "free-api", "no-api-key",

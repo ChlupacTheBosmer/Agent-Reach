@@ -2,6 +2,8 @@
 
 For the AI doing the work. This one guide covers a fresh install, an update, and an upgrade from 1.5 or earlier. Run every command yourself. Each `agent-reach` command (1.6 and later) prints one JSON object; read `ok`, `result` and `error.hint`.
 
+This guide installs the fork [ChlupacTheBosmer/Agent-Reach](https://github.com/ChlupacTheBosmer/Agent-Reach) (English only, no Chinese platforms, read-only access to your saved posts and bookmarks). Every install command pins `<commit-or-tag>`: replace it with a commit hash or tag of this fork that you have reviewed, never a moving `latest` link or branch name.
+
 > ⚠️ The PyPI package named `agent-reach` is NOT this project. Never install it from PyPI; only use the GitHub URL below.
 
 ## 0. Before you start
@@ -15,11 +17,12 @@ For the AI doing the work. This one guide covers a fresh install, an update, and
   - macOS / Linux: `curl -LsSf https://astral.sh/uv/install.sh | sh`
   - Windows: `powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"`
   - Still `uv: command not found`? Open a new shell and try again.
+- Installing from a git URL needs `git` (`git --version`).
 
 ## 1. Install and set up
 
 ```bash
-uv tool install https://github.com/Panniantong/Agent-Reach/releases/latest/download/agent-reach.zip
+uv tool install git+https://github.com/ChlupacTheBosmer/Agent-Reach@<commit-or-tag>
 agent-reach setup
 ```
 
@@ -33,20 +36,23 @@ Show `result.installation_report.markdown` to the user as is. The program genera
 
 ## Update
 
+Reinstall the fork at the newer reviewed commit or tag, then line the channel tools and the skill up with it:
+
 ```bash
-agent-reach update
+uv tool install --force git+https://github.com/ChlupacTheBosmer/Agent-Reach@<commit-or-tag>
+agent-reach update --sync-only
 ```
 
-It upgrades the program, every added channel's tools and the skill. Tell the user each line of `result.user_actions`, and show `result.installation_report.markdown` as is when it is present. If it fails, `error.hint` holds the exact command to run.
+It upgrades every added channel's tools and the skill. Tell the user each line of `result.user_actions`, and show `result.installation_report.markdown` as is when it is present. If it fails, `error.hint` holds the exact command to run.
 
 ## Upgrade from 1.5 or earlier
 
 1.6 is installed with uv; 1.5 was installed with pipx or pip. Tell the user: "This is a big upgrade. Your keys and settings are kept; I'm moving Agent Reach to the new installer." Then:
 
 1. Install uv if it is missing (see step 0).
-2. Install 1.6:
+2. Install this fork:
    ```bash
-   uv tool install --force https://github.com/Panniantong/Agent-Reach/releases/latest/download/agent-reach.zip
+   uv tool install --force git+https://github.com/ChlupacTheBosmer/Agent-Reach@<commit-or-tag>
    ```
 3. Open a new shell and check `agent-reach version` prints JSON. If it still prints the old line, run `uv tool update-shell`, open a new shell and check again.
 4. Run `agent-reach setup`. It keeps `~/.agent-reach/config.yaml`, removes the old Agent Reach program (only Agent Reach itself, never the user's other tools) and refreshes the skill for every AI.
@@ -54,8 +60,8 @@ It upgrades the program, every added channel's tools and the skill. Tell the use
 
 ## Later
 
-- The user just says what they want, e.g. "add Xiaohongshu" → `agent-reach add <channel>`; "remove V2EX" → `agent-reach remove <channel>`.
-- Keys are entered by the user, e.g. a Groq key for Xiaoyuzhou transcription: `agent-reach configure groq-key`.
-- Everything else (usage, login, browser) is covered by the installed skill.
+- The user just says what they want, e.g. "add Reddit" → `agent-reach add <channel>`; "remove YouTube" → `agent-reach remove <channel>`.
+- Keys are entered by the user, e.g. a Groq key for YouTube speech-to-text: `agent-reach configure groq-key`.
+- Everything else (usage, login, browser, saved posts and bookmarks) is covered by the installed skill.
 
 Problems and rolling back: [troubleshooting.md](troubleshooting.md).
