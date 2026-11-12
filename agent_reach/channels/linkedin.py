@@ -1,17 +1,41 @@
-"""LinkedIn job actions through upstream OpenCLI and the shared Reach browser."""
+"""LinkedIn jobs, people, companies and profiles in the shared Reach browser.
+
+Fork: people search and company pages use OpenCLI; a person's profile (the CV sections) is read from the profile page
+a person would open. Every request is paced by runtime/pacing.py."""
 import re
 from urllib.parse import urlsplit
 
-from agent_reach.runtime.result import BAD_INPUT, ReachError
+from agent_reach.runtime.result import BAD_INPUT, ReachError, make_item
 from agent_reach.utils.url import host_matches
 
 from ._opencli_site import OpenCLISiteChannel
 from .base import Action, Param
 
+_SECTIONS = ("Topcard|About|Experience|Education|Skills|Certifications|Licenses|Languages|Projects|Volunteering|Honors|"
+             "Publications|Courses|Recommendations|Organizations|Patents|TestScores|Services")
+PERSON_READY = ("!!document.querySelector('[id$=\"Topcard\"], main h1') || "
+                "/\\/(login|checkpoint|authwall|uas)/.test(location.pathname)")
+PERSON_JS = f"""(() => {{
+  if (/\\/(login|checkpoint|authwall|uas)/i.test(location.pathname)) return {{_blocked: location.pathname}};
+  const cards = {{}};
+  for (const el of document.querySelectorAll('[id*="profile.card"]')) {{
+    const m = el.id.match(/({_SECTIONS})$/);
+    if (m && !cards[m[1]]) cards[m[1]] = el.innerText.trim();
+  }}
+  for (const id of ['about', 'experience', 'education', 'skills', 'licenses_and_certifications', 'languages', 'projects']) {{
+    const sec = (document.getElementById(id) || {{}}).closest ? document.getElementById(id).closest('section') : null;
+    const key = id[0].toUpperCase() + id.slice(1);
+    if (sec && !cards[key]) cards[key] = sec.innerText.trim();
+  }}
+  if (!cards.Topcard) {{ const h = document.querySelector('main h1'); if (h) cards.Topcard = h.closest('section').innerText.trim(); }}
+  if (!cards.Topcard) return {{_missing: 'LinkedIn profile not found or not rendered'}};
+  return {{cards}};
+}})()"""
+
 
 class LinkedInChannel(OpenCLISiteChannel):
     name = site = "linkedin"
-    description = "LinkedIn job search and details"
+    description = "LinkedIn jobs, people, companies and profiles"
     domains = ("linkedin.com",)
     login_hint = "linkedin.com"
     login_url = "https://www.linkedin.com/login"
@@ -25,7 +49,37 @@ class LinkedInChannel(OpenCLISiteChannel):
             public_web=("linkedin.com/jobs/view/",)),
         Action("read", "Read a LinkedIn job description", (Param("target", "full job URL"),),
                (("opencli", "_read"),), timeout=90, public_web=("linkedin.com/jobs/view/",)),
+        Action("people", "Search people (name, headline, location, profile URL)", (
+            Param("keywords", "e.g. 'machine learning Brno'"),
+            Param("limit", "max people", required=False, type=int, default=10)),
+            (("opencli", "_people"),), timeout=180),
+        Action("company", "A company page: industry, size, HQ, founded, website, followers, about",
+               (Param("target", "company URL or its linkedin.com/company/<slug>"),), (("opencli", "_company"),), timeout=180),
+        Action("person", "A person's profile: top card, about, experience, education, skills and the other sections",
+               (Param("target", "profile URL (linkedin.com/in/<id>)"),), (("page", "_person"),), timeout=180),
     )
+
+    def _people(self, *, keywords, limit, timeout):
+        return self._opencli(["people-search", keywords, "--limit", str(limit)], timeout)[:limit]
+
+    def _company(self, *, target, timeout):
+        slug = str(target).strip().rstrip("/").split("/company/")[-1].split("/")[0]
+        if not re.fullmatch(r"[\w%.-]+", slug or ""):
+            raise ReachError(BAD_INPUT, "Expected a linkedin.com/company/<slug> URL or slug")
+        return self._opencli(["company", f"https://www.linkedin.com/company/{slug}/"], timeout)[:1]
+
+    def _person(self, *, target, timeout):
+        from agent_reach.runtime import page
+        m = re.search(r"linkedin\.com/in/([^/?#]+)", str(target)) or re.fullmatch(r"([\w%-]{2,100})", str(target).strip())
+        if not m:
+            raise ReachError(BAD_INPUT, "Expected a linkedin.com/in/<id> profile URL")
+        url = f"https://www.linkedin.com/in/{m.group(1)}/"
+        d = page.read("linkedin", url, PERSON_JS, ready=PERSON_READY, settle=4)
+        cards = d.get("cards") or {}
+        top = (cards.get("Topcard") or "").splitlines()
+        body = "\n\n".join(f"## {name}\n{text}" for name, text in cards.items() if name != "Topcard")
+        return [make_item(title=top[0] if top else None, url=url, text=(cards.get("Topcard", "") + "\n\n" + body).strip(),
+                          raw={"sections": cards})]
 
     def _jobs(self, *, query, location, limit, timeout):
         args = ["search", query, "--limit", str(limit)]

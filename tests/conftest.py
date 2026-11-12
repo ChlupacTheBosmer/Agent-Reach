@@ -84,6 +84,8 @@ def isolated_home(tmp_path, monkeypatch):
     monkeypatch.delenv("OPENCLAW_HOME", raising=False)
     # never start the background release check from tests
     monkeypatch.setenv("AGENT_REACH_NO_UPDATE_CHECK", "1")
+    # fork: no human-pace sleeps in unit tests (tests/test_pacing.py turns it back on)
+    monkeypatch.setenv("AGENT_REACH_PACING", "off")
     # Public-first routing must not turn adapter unit tests into live requests.
     # Network tests supply their own response below this fixture.
     def no_network(*args, **kwargs):

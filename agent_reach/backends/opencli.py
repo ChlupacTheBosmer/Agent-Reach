@@ -58,21 +58,29 @@ def _opencli_error(text: str, login_hint: str):
 
 def opencli_call(site: str, args, *, timeout: float, login_hint: str = ""):
     """One bounded command, using an explicit existing browser binding. No retry."""
+    from agent_reach.runtime import pacing
     from agent_reach.runtime.browser_binding import environment
     from agent_reach.runtime.run import CommandFailed, run_cmd
 
     env = environment(site)
     argv = ["opencli", site, *args, "-f", "json"]
+    pacing.before(site)  # fork: human pace, daily cap, pause after blocks
+
+    def fail(text):
+        err = _opencli_error(text, login_hint)
+        pacing.failed(site, f"{err.message} {text or ''}")
+        return err
+
     try:
         out = run_cmd(argv, timeout=timeout, env=env)
     except CommandFailed as exc:
-        raise _opencli_error(exc.stdout or exc.stderr, login_hint) from None
+        raise fail(exc.stdout or exc.stderr) from None
     try:
         data = json.loads(out)
     except ValueError:
-        raise _opencli_error(out, login_hint) from None
+        raise fail(out) from None
     if isinstance(data, dict) and data.get("ok") is False:
-        raise _opencli_error(out, login_hint)
+        raise fail(out)
     from agent_reach.runtime import browser
     browser.save_session()
     return data
