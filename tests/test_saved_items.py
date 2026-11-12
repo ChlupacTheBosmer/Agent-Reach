@@ -40,3 +40,10 @@ def test_reddit_saved_allows_an_empty_list(monkeypatch):
     out = run_action(RedditChannel(), "saved", {})
     assert out["ok"] and out["items"] == []
     assert call.call_args.args == ("reddit", ["saved", "--limit", "20"])
+
+
+def test_instagram_saved_caption_becomes_text(monkeypatch):
+    rows = [{"index": 1, "user": "someone", "caption": "Seven repos worth a look", "likes": 3, "type": "carousel"}]
+    monkeypatch.setattr(_opencli_site, "opencli_call", Mock(return_value=rows))
+    item = run_action(InstagramChannel(), "saved", {})["items"][0]
+    assert item["text"] == "Seven repos worth a look" and item["author"] == "someone"

@@ -110,7 +110,7 @@ def opencli_items(rows) -> list:
                     if isinstance(r.get("created_utc"), (int, float))
                     else pick("published_at", "created_at", "time", "date")
                 ),
-                text=pick("content", "text", "desc", "description", "body"),
+                text=pick("content", "text", "desc", "description", "body", "caption"),
                 raw=r,
             )
         )
