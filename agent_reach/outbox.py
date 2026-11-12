@@ -220,8 +220,13 @@ def _messenger_url(target: str) -> str:
 def facebook_message(d: dict, send: bool) -> str:
     tab = Tab(_messenger_url(d["target"]), "facebook")
     try:
-        if not tab.wait(MESSAGE_BOX, 35):
-            raise SystemExit("no message box in the conversation (Messenger may need a PIN or the person cannot be messaged)")
+        if not tab.wait(f"({MESSAGE_BOX}) || /PIN/.test([...document.querySelectorAll('[role=dialog]')].map(d => d.innerText).join(' '))", 35) \
+                or tab.js(r"/PIN/.test([...document.querySelectorAll('[role=dialog]')].map(d => d.innerText).join(' '))"):
+            if tab.js(r"/PIN/.test([...document.querySelectorAll('[role=dialog]')].map(d => d.innerText).join(' '))"):
+                raise SystemExit("Messenger asks for the user's chat PIN in this browser. The user (never the agent) runs "
+                                 "`agent-reach login facebook`, opens facebook.com/messages in that window, enters the PIN, "
+                                 "then `agent-reach browser stop`.")
+            raise SystemExit("no message box in the conversation (the person may not accept messages)")
         header = _norm(tab.js("(document.querySelector('[role=main]')||document.body).innerText.slice(0, 1500)") or "")
         if _norm(d["expected_name"]).lower() not in header.lower():
             raise SystemExit(f"the conversation does not show {d['expected_name']!r}; refusing to send")
@@ -386,7 +391,12 @@ def cmd_new(argv: list) -> int:
     d = {"kind": a.kind, "target": a.target.strip(), "expected_name": a.expected_name.strip(), "status": "draft",
          "created": dt.datetime.now().isoformat(timespec="seconds"), "result": "", "text": text}
     root().mkdir(parents=True, exist_ok=True)
-    p = root() / f"{dt.datetime.now():%Y%m%d-%H%M%S}-{a.kind}.md"
+    stamp = f"{dt.datetime.now():%Y%m%d-%H%M%S}-{a.kind}"
+    p = root() / f"{stamp}.md"
+    n = 2
+    while p.exists():  # never overwrite another draft
+        p = root() / f"{stamp}-{n}.md"
+        n += 1
     p.write_text(render(d), "utf-8")
     print(f"draft: {p}\nOpen it, edit the text below the --- line, save. Then: agent-reach-outbox show {p.stem}")
     return 0
