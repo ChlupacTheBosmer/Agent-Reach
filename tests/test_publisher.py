@@ -280,3 +280,12 @@ def test_an_account_brought_over_from_a_mac_presents_as_a_mac(db, home_calls):
     assert home_calls[-1][2]["browser_platform"] == "macos"
     with pytest.raises(core.Refused, match="macos or windows"):
         core.create_account(db, {"network": "twitter", "label": "X", "owner": "Petr", "proxy": "http://127.0.0.1:1055", "browser_platform": "linux"}, "petr")
+
+
+def test_facebook_profile_post_needs_no_handle(tmp_path, monkeypatch):
+    """facebook-post goes to facebook.com/me and checks the account's name (label), so an empty handle is fine."""
+    from agent_reach.publisher import core
+    acc = {"id": "facebook-petr", "network": "facebook", "label": "Petr Chlup", "handle": "", "route": "browser", "status": "ok"}
+    monkeypatch.setattr(core, "account", lambda db, i: acc)
+    post = core.normalize(None, {"account": "facebook-petr", "kind": "facebook-post", "text": "Hello"})
+    assert (post["target"], post["expected_name"]) == ("https://www.facebook.com/me", "Petr Chlup")

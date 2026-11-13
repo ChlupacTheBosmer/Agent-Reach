@@ -33,7 +33,7 @@ import sys
 import time
 from pathlib import Path
 
-KINDS = ("facebook-group-post", "facebook-page-post", "facebook-message", "linkedin-post", "linkedin-page-post",
+KINDS = ("facebook-group-post", "facebook-page-post", "facebook-post", "facebook-message", "linkedin-post", "linkedin-page-post",
          "linkedin-message", "linkedin-connect",
          "twitter-post", "twitter-reply", "bluesky-post", "bluesky-reply", "bluesky-message",
          "instagram-post", "instagram-reel",
@@ -216,14 +216,20 @@ def unknown(why: str) -> SystemExit:
     return SystemExit(f"UNKNOWN: {why}. It may have been posted: look at the page before sending anything again")
 
 
+#: the audience button in the post editor ("Veřejné", "Přátelé", "Public", "Friends"): reported, never changed
+AUDIENCE = f"""(([...((({EDITOR}) || document).querySelectorAll('[role=button][aria-label]'))].find(b => /okruh|soukrom|privacy|audience/i.test(b.getAttribute('aria-label'))) || {{}}).innerText || '').trim()"""
+
+
 def facebook_group_post(d: dict, send: bool) -> str:
-    """A group post, or (facebook-page-post) a post on the Page this browser is switched into."""
-    page = d["kind"] == "facebook-page-post"
+    """A group post; (facebook-page-post) a post on the Page this browser is switched into; (facebook-post) a post on
+    the member's own profile. Page and profile use the owner's composer ("What's on your mind")."""
+    profile = d["kind"] == "facebook-post"
+    page = d["kind"] == "facebook-page-post" or profile
     tab = Tab(d["target"], "facebook")
     try:
         tab.wait("document.querySelector('[role=main]')", 30)
         time.sleep(3)
-        if page:
+        if page and not profile:
             if tab.js(SWITCH_PROMPT):
                 raise SystemExit("this browser acts as a person, not as the Page: switch into the Page once in the "
                                  "login view (profile menu > the Page), then try again; nothing was posted")
@@ -234,6 +240,8 @@ def facebook_group_post(d: dict, send: bool) -> str:
             if not tab.wait(PAGE_PROMPT, 20):
                 raise SystemExit("no owner composer ('What's on your mind') on the Page: this browser is not acting as "
                                  "the Page; nothing was posted")
+        elif profile and not tab.wait(PAGE_PROMPT, 30):
+            raise SystemExit("no 'What's on your mind' box on the profile (not logged in, or acting as a Page); nothing was posted")
         elif not tab.wait(COMPOSER_BUTTON, 30):
             raise SystemExit("no 'Write something' box on the group page (not a member, or posting is closed)")
         if _norm(d["expected_name"]).lower() not in _norm(tab.js("document.title + ' ' + (document.querySelector('[role=main]')||document.body).innerText.slice(0, 3000)") or "").lower():
@@ -246,7 +254,7 @@ def facebook_group_post(d: dict, send: bool) -> str:
             raise SystemExit("the post editor did not open")
         if page and _norm(d["expected_name"]).lower() not in _norm(tab.js(f"(({EDITOR}) || {{}}).innerText || ''") or "").lower():
             _discard(tab)
-            raise SystemExit("the editor does not show the Page as the author; refusing to post")
+            raise SystemExit(f"the editor does not show {'you' if profile else 'the Page'} as the author; refusing to post")
         tab.js(f"(() => {{ const x = {COMPOSER_BOX}; x.focus(); x.click(); return true; }})()")
         tab.type_lines(d["text"], newline_shift=False)
         time.sleep(1.5)
@@ -264,16 +272,19 @@ def facebook_group_post(d: dict, send: bool) -> str:
                 raise SystemExit("the photos did not appear in the editor; nothing was posted")
         if not tab.wait(POST_READY, 90):
             raise SystemExit("the Post button is missing or stays disabled; nothing was posted")
+        audience = _norm(tab.js(AUDIENCE) or "") if profile else ""
+        seen = f"; audience: {audience or 'unknown'} (Facebook keeps your last choice)" if profile else ""
         if not send:
             _discard(tab)
-            return (f"check ok: {'Page' if page else 'group'} found, editor opened{' as the Page' if page else ''}, text"
-                    f"{' and photos' if images else ''} in, Post button ready; draft discarded, nothing posted")
+            where = "profile" if profile else "Page" if page else "group"
+            return (f"check ok: {where} found, editor opened{' as the author' if page else ''}, text"
+                    f"{' and photos' if images else ''} in, Post button ready{seen}; draft discarded, nothing posted")
         tab.js(f"(() => {{ {POST_BUTTON}.click(); return true; }})()")
         if not tab.wait(f"!({COMPOSER_BOX})", 60):
             raise unknown("the editor did not close after Post")
         time.sleep(3)
         pending = tab.js(r"/čeká na schválení|pending|awaiting approval|schválit/i.test(document.body.innerText)")
-        return "posted, waiting for admin approval" if pending else "posted"
+        return "posted, waiting for admin approval" if pending else f"posted{seen}"
     finally:
         tab.close()
 
@@ -701,7 +712,7 @@ def comment_reply(d: dict, send: bool) -> str:
         tab.close()
 
 
-SENDERS = {"facebook-group-post": facebook_group_post, "linkedin-post": linkedin_post, "linkedin-page-post": linkedin_post, "facebook-page-post": facebook_group_post,
+SENDERS = {"facebook-group-post": facebook_group_post, "linkedin-post": linkedin_post, "linkedin-page-post": linkedin_post, "facebook-page-post": facebook_group_post, "facebook-post": facebook_group_post,
            "instagram-post": instagram, "instagram-reel": instagram,
            "facebook-comment-reply": comment_reply, "instagram-comment-reply": comment_reply, "linkedin-comment-reply": comment_reply,
            "facebook-message": facebook_message,

@@ -24,6 +24,7 @@ NETWORKS = {
         "twitter-post": {"text": 280, "images": 4, "target": "own", "options": ["first_comment"]},
         "twitter-reply": {"text": 280, "images": 1, "target": "post"}}},
     "facebook": {"route": "browser", "kinds": {
+        "facebook-post": {"text": 5000, "images": 10, "target": "own", "media": "image"},
         "facebook-group-post": {"text": 5000, "images": 10, "target": "group", "media": "image"},
         "facebook-comment-reply": {"text": 2000, "images": 0, "target": "comment"},
         "facebook-message": {"text": 2000, "images": 0, "target": "person"}}},
@@ -43,11 +44,11 @@ NETWORKS = {
         "linkedin-message": {"text": 2000, "images": 0, "target": "thread"},
         "linkedin-connect": {"text": 300, "images": 0, "target": "person"}}},
 }
-OWN_URL = {"bluesky": "https://bsky.app/profile/{h}", "twitter": "https://x.com/{h}",
+OWN_URL = {"bluesky": "https://bsky.app/profile/{h}", "twitter": "https://x.com/{h}", "facebook": "https://www.facebook.com/me",
            "facebookpage": "https://www.facebook.com/{h}", "instagram": "https://www.instagram.com/{h}/",
            "linkedin": "https://www.linkedin.com/in/{h}/", "linkedinpage": "https://www.linkedin.com/company/{h}/"}
 #: networks whose posts are checked against the name the page shows (the account's label), not the handle
-NAMED = {"facebookpage", "linkedin", "linkedinpage"}
+NAMED = {"facebook", "facebookpage", "linkedin", "linkedinpage"}
 #: Account-home settings each network accepts (written to that home's Agent Reach config, never returned).
 CREDENTIALS = {"bluesky": ("bluesky_handle", "bluesky_app_password")}
 
@@ -270,7 +271,7 @@ def normalize(db, body: dict) -> dict:
         if urlsplit(m["url"]).scheme != "https":
             raise Refused("media must be https URLs")
     if spec["target"] == "own":
-        if not acc["handle"]:
+        if not acc["handle"] and "{h}" in OWN_URL[acc["network"]]:  # facebook.com/me needs none
             raise Refused("the account has no handle yet; set its credentials or handle first")
         target = OWN_URL[acc["network"]].format(h=acc["handle"])
         expected = acc["label"] if acc["network"] in NAMED else acc["handle"]  # pages and profiles show a name
