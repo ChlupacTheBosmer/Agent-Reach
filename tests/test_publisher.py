@@ -149,3 +149,105 @@ def test_accounts_that_are_not_ready_cannot_queue(db):
     body = {"account": acc["id"], "kind": "bluesky-post", "text": "Hi"}
     with pytest.raises(core.Refused, match="not ready"):
         core.enqueue(db, {**body, "confirm": core.preview(db, body)["hash"], "author": "petr"}, "petr")
+
+
+# ── Meta: Facebook Page and Instagram (phase 3) ──
+
+def _meta_account(db, network, handle):
+    acc = core.create_account(db, {"network": network, "label": "V4AIR", "owner": "V4AIR", "handle": handle}, "petr")
+    db.execute("UPDATE accounts SET status='ok' WHERE id=?", (acc["id"],))
+    return acc
+
+
+@pytest.fixture
+def graph(monkeypatch):
+    """Fake Graph API: records calls, answers like Meta does."""
+    from agent_reach.publisher import meta
+    calls = []
+
+    def fake(method, path, params=None):
+        calls.append((method, path, dict(params or {})))
+        if path == "oauth/access_token":
+            return {"access_token": "long" if params.get("grant_type") else "short"}
+        if path == "me/accounts":
+            return {"data": [{"id": "P1", "name": "V4AIR", "access_token": "page-token",
+                              "instagram_business_account": {"id": "IG1", "username": "v4air.eu"}},
+                             {"id": "P2", "name": "Other page", "access_token": "x"}]}
+        if method == "GET" and path == "P1":
+            return {"name": "V4AIR"}
+        if method == "GET" and path == "IG1":
+            return {"username": "v4air.eu"}
+        if method == "GET" and "fields" in (params or {}) and "status_code" in params["fields"]:
+            return {"status_code": "FINISHED"}
+        if method == "GET":
+            return {"permalink": "https://www.instagram.com/p/abc/", "permalink_url": "https://facebook.com/P1/posts/9"}
+        return {"id": f"id{len(calls)}"}
+    monkeypatch.setattr(meta, "graph", fake)
+    return calls
+
+
+def test_meta_connect_picks_the_named_page_and_stores_its_token(graph, monkeypatch):
+    from agent_reach.config import Config
+    from agent_reach.publisher import meta
+    monkeypatch.setenv("META_APP_ID", "app")
+    monkeypatch.setenv("META_APP_SECRET", "secret")
+    out = meta.connect("instagram", "@v4air.eu", "CODE", "https://app/api/meta/callback")
+    assert out == {"ok": True, "result": "connected v4air.eu", "handle": "v4air.eu"}
+    cfg = Config(read_only=True)
+    assert cfg.get("meta_page_token") == "page-token" and cfg.get("meta_ig_id") == "IG1"
+    with pytest.raises(SystemExit, match="you manage: V4AIR"):
+        meta.connect("facebookpage", "Nope", "CODE", "https://app/cb")
+
+
+def test_meta_kinds_are_validated_by_the_publisher(db):
+    acc = _meta_account(db, "instagram", "v4air.eu")
+    base = {"account": acc["id"], "text": "Hi", "media": [{"url": "https://app/media/photos/a.jpg"}]}
+    with pytest.raises(core.Refused, match="at least 2"):
+        core.preview(db, {**base, "kind": "instagram-carousel"})
+    with pytest.raises(core.Refused, match="needs a video"):
+        core.preview(db, {**base, "kind": "instagram-reel"})
+    with pytest.raises(core.Refused, match="at most 3 collaborators"):
+        core.preview(db, {**base, "kind": "instagram-post", "options": {"collaborators": "a,b,c,d"}})
+    p = core.preview(db, {**base, "kind": "instagram-post", "options": {"tag_people": "@a, b", "link": "https://x"}})
+    assert p["post"]["options"] == {"tag_people": ["a", "b"]}  # link is not an Instagram option, dropped
+    assert p["post"]["target"] == "https://www.instagram.com/v4air.eu/"
+    story = core.preview(db, {**base, "kind": "instagram-story", "text": ""})
+    assert story["post"]["text"] == ""
+
+
+def test_instagram_carousel_with_tags_collaborators_and_first_comment(graph):
+    from agent_reach.config import Config
+    for k, v in {"meta_page_token": "page-token", "meta_ig_id": "IG1", "meta_page_id": "P1"}.items():
+        Config().set(k, v)
+    post = {"account": "instagram-v4air", "kind": "instagram-carousel", "expected_name": "v4air.eu", "text": "Caption",
+            "media": [{"url": "https://app/media/photos/a.jpg", "alt": "poster"}, {"url": "https://app/media/videos/b.mp4", "alt": ""}],
+            "options": {"tag_people": ["anna"], "collaborators": ["prg.ai"], "first_comment": "#AI"}}
+    out = job.publish({"post": post})
+    assert out == {"ok": True, "result": "posted: https://www.instagram.com/p/abc/"}
+    creates = [p for m, path, p in graph if m == "POST" and path == "IG1/media"]
+    assert creates[0]["image_url"].endswith("a.jpg") and creates[0]["alt_text"] == "poster" and '"anna"' in creates[0]["user_tags"]
+    assert creates[1]["media_type"] == "VIDEO" and creates[1].get("user_tags") is None
+    assert creates[2]["media_type"] == "CAROUSEL" and creates[2]["collaborators"] == '["prg.ai"]'
+    assert any(path.endswith("/comments") and p["message"] == "#AI" for m, path, p in graph)
+
+
+def test_meta_refuses_when_the_token_belongs_to_another_page(graph):
+    from agent_reach.config import Config
+    for k, v in {"meta_page_token": "page-token", "meta_page_id": "P1"}.items():
+        Config().set(k, v)
+    post = {"account": "facebookpage-v4air", "kind": "fbpage-post", "expected_name": "Someone else", "text": "Hi", "media": [], "options": {}}
+    with pytest.raises(SystemExit, match="refusing"):  # job.main turns this into {"ok": false, "error": ...}
+        job.publish({"post": post})
+    assert not any(m == "POST" for m, _, _ in graph)
+
+
+def test_facebook_page_post_with_photos_and_link(graph):
+    from agent_reach.config import Config
+    for k, v in {"meta_page_token": "page-token", "meta_page_id": "P1"}.items():
+        Config().set(k, v)
+    post = {"account": "facebookpage-v4air", "kind": "fbpage-post", "expected_name": "V4AIR", "text": "Open call",
+            "media": [{"url": "https://app/media/photos/a.jpg", "alt": ""}], "options": {"link": "https://v4air.eu"}}
+    out = job.publish({"post": post})
+    assert out["ok"] and out["result"] == "posted: https://facebook.com/P1/posts/9"
+    feed = next(p for m, path, p in graph if path == "P1/feed")
+    assert feed["link"] == "https://v4air.eu" and json.loads(feed["attached_media[0]"])["media_fbid"]

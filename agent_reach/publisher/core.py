@@ -24,11 +24,26 @@ NETWORKS = {
     "facebook": {"route": "browser", "kinds": {
         "facebook-group-post": {"text": 5000, "images": 0, "target": "group"},
         "facebook-message": {"text": 2000, "images": 0, "target": "person"}}},
+    "facebookpage": {"route": "api", "kinds": {
+        "fbpage-post": {"text": 5000, "images": 10, "target": "own", "options": ["link", "first_comment"]}}},
+    "instagram": {"route": "api", "kinds": {
+        "instagram-post": {"text": 2200, "images": 1, "min_media": 1, "target": "own", "media": "image",
+                           "options": ["tag_people", "collaborators", "first_comment"]},
+        "instagram-carousel": {"text": 2200, "images": 10, "min_media": 2, "target": "own", "media": "image or video",
+                               "options": ["tag_people", "collaborators", "first_comment"]},
+        "instagram-reel": {"text": 2200, "images": 1, "min_media": 1, "target": "own", "media": "video",
+                           "options": ["collaborators", "first_comment"]},
+        "instagram-story": {"text": 0, "images": 1, "min_media": 1, "target": "own", "media": "image or video",
+                            "options": ["tag_people"]}}},
     "linkedin": {"route": "browser", "kinds": {
         "linkedin-message": {"text": 2000, "images": 0, "target": "thread"},
         "linkedin-connect": {"text": 300, "images": 0, "target": "person"}}},
 }
-OWN_URL = {"bluesky": "https://bsky.app/profile/{h}", "twitter": "https://x.com/{h}"}
+OWN_URL = {"bluesky": "https://bsky.app/profile/{h}", "twitter": "https://x.com/{h}",
+           "facebookpage": "the Facebook Page {h}", "instagram": "https://www.instagram.com/{h}/"}
+#: Kinds the publisher drives itself; all others go through Agent Reach's outbox senders.
+NATIVE = {"fbpage-post", "instagram-post", "instagram-carousel", "instagram-reel", "instagram-story"}
+OAUTH = {"facebookpage": "meta", "instagram": "meta"}
 #: Account-home settings each network accepts (written to that home's Agent Reach config, never returned).
 CREDENTIALS = {"bluesky": ("bluesky_handle", "bluesky_app_password")}
 
@@ -106,6 +121,19 @@ def set_credentials(db, account_id: str, body: dict, actor: str) -> dict:
     return public(account(db, account_id))
 
 
+def connect_oauth(db, account_id: str, body: dict, actor: str) -> dict:
+    """Finish an OAuth login (code from the app's callback): the job exchanges it and stores tokens in the home."""
+    acc = account(db, account_id)
+    if acc["network"] not in OAUTH:
+        raise Refused(f"{acc['network']} accounts do not connect with OAuth")
+    out = in_home(account_id, "oauth", {"network": acc["network"], "wanted": acc["handle"] or acc["label"],
+                                        "code": body.get("code", ""), "redirect_uri": body.get("redirect_uri", "")})
+    if out.get("ok"):
+        db.execute("UPDATE accounts SET handle=?, status='ok' WHERE id=?", (out.get("handle") or acc["handle"], account_id))
+    store.log(db, actor, "account.connect", {"account": account_id, "ok": out.get("ok"), "result": out.get("result") or out.get("error")})
+    return out
+
+
 def check_account(db, account_id: str, actor: str) -> dict:
     out = in_home(account_id, "check", {})
     status = "ok" if out.get("ok") else ("needs-login" if account(db, account_id)["route"] == "browser" else "needs-credentials")
@@ -124,13 +152,20 @@ def normalize(db, body: dict) -> dict:
         raise Refused(f"{acc['network']} supports {', '.join(net['kinds'])}")
     spec = net["kinds"][kind]
     text = (body.get("text") or "").strip()
-    if not text:
+    if not text and spec["text"]:
         raise Refused("the post has no text")
     if len(text) > spec["text"]:
         raise Refused(f"{kind}: {len(text)} characters, at most {spec['text']}")
     media = [{"url": m["url"], "alt": (m.get("alt") or "").strip()} for m in body.get("media") or []]
     if len(media) > spec["images"]:
-        raise Refused(f"{kind} takes at most {spec['images']} images")
+        raise Refused(f"{kind} takes at most {spec['images']} media files")
+    if len(media) < spec.get("min_media", 0):
+        raise Refused(f"{kind} needs at least {spec['min_media']} media file(s)")
+    video = [m for m in media if m["url"].lower().split("?")[0].endswith((".mp4", ".mov"))]
+    if spec.get("media") == "video" and len(video) != len(media):
+        raise Refused(f"{kind} needs a video (MP4 or MOV)")
+    if spec.get("media") == "image" and video:
+        raise Refused(f"{kind} takes images only; use a reel for video")
     for m in media:
         if urlsplit(m["url"]).scheme != "https":
             raise Refused("media must be https URLs")
@@ -142,10 +177,19 @@ def normalize(db, body: dict) -> dict:
         target, expected = (body.get("target") or "").strip(), (body.get("expected_name") or "").strip()
         if not target or not expected:
             raise Refused(f"{kind} needs a target ({spec['target']}) and the exact name the page shows")
+    allowed = set(spec.get("options", []))
+    options = {k: v for k, v in (body.get("options") or {}).items() if k in allowed and v}
+    for k in ("tag_people", "collaborators"):
+        if k in options:
+            options[k] = [str(x).strip().lstrip("@") for x in (options[k] if isinstance(options[k], list) else str(options[k]).split(","))
+                          if str(x).strip()]
+    if len(options.get("collaborators", [])) > 3:
+        raise Refused("Instagram allows at most 3 collaborators")
     post = {"account": acc["id"], "kind": kind, "target": target, "expected_name": expected, "text": text,
-            "media": media, "options": body.get("options") or {}}
-    from agent_reach import outbox
-    outbox.validate({**post, "status": "", "created": "", "result": ""})
+            "media": media, "options": options}
+    if kind not in NATIVE:
+        from agent_reach import outbox
+        outbox.validate({**post, "status": "", "created": "", "result": ""})
     return post
 
 
