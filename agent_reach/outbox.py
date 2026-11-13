@@ -191,6 +191,13 @@ class Tab:
         if problem:
             raise SystemExit(f"{problem}; nothing was posted")
 
+    def shot(self, path) -> None:
+        """A JPEG of the page, for debugging a step that did not finish (never of typed secrets: posting pages only)."""
+        import base64
+        data = (self.cdp.call("Page.captureScreenshot", {"format": "jpeg", "quality": 60}, target_id=self.id) or {}).get("data")
+        if data:
+            Path(path).write_bytes(base64.b64decode(data))
+
     def close(self) -> None:
         self.cdp.call("Target.closeTarget", {"targetId": self.id})
         self.cdp._TIMEOUT = self.old
@@ -574,6 +581,8 @@ def _ig_button(pattern: str) -> str:
 IG_FILE = r"""[...document.querySelectorAll('[role=dialog] input[type=file]')].pop()"""
 IG_CAPTION = r"""[...document.querySelectorAll('[role=dialog] [contenteditable=true]')].find(x => /popis|caption/i.test(x.getAttribute('aria-label') || x.getAttribute('aria-placeholder') || ''))"""
 IG_ALT = r"""[...document.querySelectorAll('[role=dialog] input')].filter(i => /alternativní|alt text/i.test(i.getAttribute('placeholder') || i.getAttribute('aria-label') || ''))"""
+#: Instagram's own "could not share" message: the post is not out
+IG_FAILED = r"""/nepodařilo se (sdílet|zveřejnit|nahrát)|could not be shared|couldn't (share|post|upload)|něco se pokazilo|something went wrong/i.test(((""" + IG_TOP + r""") || {}).innerText || '')"""
 IG_DONE = r"""/byl sdílen|byla sdílena|byl zveřejněn|has been shared|post shared|reel shared|was shared/i.test(((""" + IG_TOP + r""") || {}).innerText || '')"""
 
 
@@ -653,8 +662,13 @@ def instagram(d: dict, send: bool) -> str:
             _ig_close(tab)
             return f"check ok: logged in as @{want}, {len(media)} file(s) in, caption typed, Share present; discarded, nothing posted"
         tab.click(share)
-        if not tab.wait(IG_DONE, 240):
-            raise unknown("Instagram did not confirm the post within 4 minutes")
+        if not tab.wait(f"({IG_DONE}) || ({IG_FAILED})", 240):
+            seen = _norm(tab.js(f"((({IG_TOP}) || {{}}).innerText || '')") or "")[:120]
+            tab.shot(Path.home() / "last-instagram-share.jpg")  # for debugging; replaced by the next attempt
+            raise unknown(f"Instagram did not confirm the post within 4 minutes (the dialog shows {seen!r})")
+        if tab.js(IG_FAILED) and not tab.js(IG_DONE):
+            seen = _norm(tab.js(f"((({IG_TOP}) || {{}}).innerText || '')") or "")[:120]
+            raise SystemExit(f"Instagram could not share the post ({seen!r}); nothing was posted")
         time.sleep(2)
         tab.click(_ig_button("zavřít|close"))
         return f"posted: https://www.instagram.com/{want}/"
@@ -669,6 +683,8 @@ LI_MENU_POST = r"""[...document.querySelectorAll('[role=menu] [role=menuitem], [
 #: the editor: in a dialog (older layout) or LinkedIn's composer at /sharing/compose (a tiptap/ProseMirror box, no
 #: dialog role); comment boxes under feed posts sit in forms and are never it
 LI_BOX = r"""[...document.querySelectorAll('[role=dialog] [role=textbox][contenteditable=true], [contenteditable=true].ProseMirror, [contenteditable=true][role=textbox]')].filter(x => !x.closest('form, .comments-comment-box')).pop()"""
+#: the keyboard focus is in the editor
+LI_FOCUSED = f"""(() => {{ const x = {LI_BOX}; const a = document.activeElement; return !!x && !!a && (a === x || x.contains(a)); }})()"""
 #: the composer around the editor: the nearest block that also holds the Post button (it shows the author too)
 LI_DIALOG = f"""(() => {{ let e = ({LI_BOX}); while (e && !(e.querySelectorAll && [...e.querySelectorAll('button')].some(b => /^(post|zveřejnit|publikovat)$/i.test((b.innerText || '').trim())))) e = e.parentElement; return e; }})()"""
 LI_MEDIA = f"""[...((({LI_DIALOG}) || document.createElement('div')).querySelectorAll('button[aria-label]'))].find(b => /media|photo|médi|fotk/i.test(b.getAttribute('aria-label')))"""
@@ -716,12 +732,23 @@ def linkedin_post(d: dict, send: bool) -> str:
                 time.sleep(3)
             if not tab.wait(LI_BOX, 30):
                 raise SystemExit("LinkedIn's editor did not come back after the photos; nothing was posted")
-        tab.js(f"(() => {{ const x = {LI_BOX}; x.focus(); x.click(); return true; }})()")
-        tab.type_lines(d["text"], newline_shift=False)
-        time.sleep(1.5)
-        typed = tab.js(f"(() => {{ const x = {LI_BOX}; return x ? x.innerText : ''; }})()") or ""
-        if _norm(d["text"])[:200] not in _norm(typed):
-            raise SystemExit("the editor does not contain the approved text; nothing was posted")
+        typed = ""
+        for attempt in range(2):  # LinkedIn redraws the composer after photos; text typed before it has focus is lost
+            time.sleep(1.5)
+            for _ in range(5):
+                tab.click(LI_BOX)
+                time.sleep(0.6)
+                if tab.js(LI_FOCUSED):
+                    break
+            if attempt:  # a second try starts from an empty editor
+                tab.js(f"(() => {{ const x = {LI_BOX}; x.focus(); document.execCommand('selectAll'); document.execCommand('delete'); return true; }})()")
+            tab.type_lines(d["text"], newline_shift=False)
+            time.sleep(1.5)
+            typed = tab.js(f"(() => {{ const x = {LI_BOX}; return x ? x.innerText : ''; }})()") or ""
+            if _norm(d["text"])[:200] in _norm(typed):
+                break
+        else:
+            raise SystemExit(f"the editor does not contain the approved text (it shows {_norm(typed)[:60]!r}); nothing was posted")
         if not tab.wait(f"(() => {{ const b = {LI_POST}; return !!b && !b.disabled; }})()", 60):
             raise SystemExit("the Post button is missing or disabled; nothing was posted")
         if not send:  # empty the editor first, so LinkedIn has no draft to keep
