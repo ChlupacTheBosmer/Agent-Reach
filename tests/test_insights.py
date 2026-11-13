@@ -120,3 +120,10 @@ def test_comment_replies_are_validated_kinds():
     outbox.validate(d)
     assert outbox.SENDERS["linkedin-comment-reply"] is outbox.comment_reply
     json.dumps(core.NETWORKS)
+
+
+def test_members_only_see_the_accounts_they_may_use(db, monkeypatch):
+    monkeypatch.setattr(core, "in_home", lambda acc, cmd, payload, timeout=120: {"ok": True, "result": RESULT})
+    insights.collect_account(db, "bluesky-v4air")
+    assert insights.metrics(db, {"accounts": []})["posts"] == [] and insights.metrics(db, {"accounts": []})["comments"]["total"] == 0
+    assert insights.inbox_query(db, {"account": []}) == [] and len(insights.inbox_query(db, {"id": "bsky:1"})) == 1

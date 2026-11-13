@@ -47,7 +47,7 @@ def collect_account(db, account_id: str, actor: str = "publisher", manual: bool 
                                                "known": known}, timeout=1500)
     gap = INTERVAL.get(acc["network"], 10800) * random.uniform(0.8, 1.2)
     if not out.get("ok"):
-        err = str(out.get("error") or "collection failed")[:300]
+        err = friendly(str(out.get("error") or "collection failed"))
         db.execute("INSERT INTO collect_state(account, last_at, next_at, last_error, manual_at) VALUES (?,?,?,?,?) "
                    "ON CONFLICT(account) DO UPDATE SET last_at=excluded.last_at, next_at=excluded.next_at, "
                    "last_error=excluded.last_error, manual_at=COALESCE(excluded.manual_at, manual_at)",
@@ -98,6 +98,21 @@ def _save(db, acc: dict, res: dict, now: float) -> int:
     return new
 
 
+def friendly(err: str) -> str:
+    """Short reasons a team member can act on, instead of tool output."""
+    e = err.lower()
+    for needle, text in (("app password", "needs its app password: Accounts › Credentials"),
+                         ("browser did not open", "its browser could not start; try again later"),
+                         ("not logged in", "not logged in: Accounts › Log in"), ("login", "needs a login: Accounts › Log in"),
+                         ("rate_limited", "paused for now (the site asked to slow down); it resumes on its own"),
+                         ("budget", "today's reading budget is used up; it resumes tomorrow"),
+                         ("checkpoint", "the site wants a person to confirm something: Accounts › Log in"),
+                         ("timed out", "the site did not answer in time; it tries again later")):
+        if needle in e:
+            return text
+    return err.split("\n")[0][:160]
+
+
 def collect_due(db, now: float | None = None) -> dict | None:
     """Collect the one account most overdue (logged-in accounts only, inside the day window)."""
     now = time.time() if now is None else now
@@ -129,8 +144,10 @@ def mark_sent(db, post: dict, result: str) -> None:
 
 def inbox_query(db, f: dict) -> list:
     sql, args = ["SELECT i.*, a.label AS account_label FROM inbox i JOIN accounts a ON a.id=i.account WHERE 1=1"], []
-    for key in ("network", "account", "status", "type"):
+    for key in ("id", "network", "account", "status", "type"):
         vals = f.get(key)
+        if isinstance(vals, list) and not vals and key == "account":
+            return []  # a member with no usable accounts sees nothing, not everything
         if vals:
             vals = vals if isinstance(vals, list) else [vals]
             sql.append(f"AND i.{key} IN ({','.join('?' * len(vals))})")
@@ -170,7 +187,8 @@ def _engagement(c: dict) -> int:
 
 def metrics(db, f: dict) -> dict:
     since = time.time() - float(f.get("days") or 90) * 86400
-    accounts = {a["id"]: a for a in store.rows(db.execute("SELECT id, network, label, handle FROM accounts"))}
+    allowed = f.get("accounts")  # the Worker limits a member to the accounts they may use
+    accounts = {a["id"]: a for a in store.rows(db.execute("SELECT id, network, label, handle FROM accounts")) if allowed is None or a["id"] in allowed}
     out_accounts = []
     for aid, a in accounts.items():
         series = store.rows(db.execute("SELECT at, followers, following, posts, profile_views, impressions FROM profile_metrics "
@@ -185,6 +203,8 @@ def metrics(db, f: dict) -> dict:
     posts = []
     for p in store.rows(db.execute("SELECT o.*, ps.author, ps.meta FROM own_posts o LEFT JOIN posts ps ON ps.id=o.post_id "
                                    "WHERE COALESCE(o.created_at, o.first_seen)>=? ORDER BY COALESCE(o.created_at, o.first_seen) DESC", (since,))):
+        if p["account"] not in accounts:
+            continue
         c = json.loads(p["last"] or "{}")
         eng = _engagement(c)
         reach = c.get("impressions") or c.get("views")
@@ -198,7 +218,8 @@ def metrics(db, f: dict) -> dict:
                       "rate_basis": "impressions" if reach else "followers" if base else None,
                       "via_app": p["post_id"] is not None, "author": p.get("author"), "tags": meta.get("tags", []),
                       "history": [[h["at"], _engagement(h), h.get("impressions") or h.get("views")] for h in hist]})
-    items = store.rows(db.execute("SELECT network, status, question, created_at, fetched_at, answered_at FROM inbox WHERE fetched_at>=?", (since,)))
+    items = [i for i in store.rows(db.execute("SELECT account, network, status, question, created_at, fetched_at, answered_at FROM inbox WHERE fetched_at>=?", (since,)))
+             if i["account"] in accounts]
     answered = [i for i in items if i["status"] == "answered" and i["answered_at"]]
     response = [(i["answered_at"] - (i["created_at"] or i["fetched_at"])) / 60 for i in answered]
     by_net = {}
