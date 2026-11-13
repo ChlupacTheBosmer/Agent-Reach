@@ -594,6 +594,12 @@ def instagram(d: dict, send: bool) -> str:
             raise SystemExit("no Create button on Instagram; nothing was posted")
         time.sleep(2)
         tab.click(_ig_button("příspěvek|post"))  # newer layouts open a small menu first
+        if not tab.wait(IG_FILE, 8) and tab.js(f"!!({IG_NOTIFY_LATER})"):
+            tab.click(IG_NOTIFY_LATER)  # the notifications prompt can appear a few seconds after the page, over Create
+            time.sleep(1.5)
+            tab.click(IG_CREATE)
+            time.sleep(2)
+            tab.click(_ig_button("příspěvek|post"))
         if not tab.wait(IG_FILE, 20):
             raise SystemExit("Instagram's Create dialog did not open; nothing was posted")
         tab.upload(IG_FILE, media)

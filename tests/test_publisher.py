@@ -289,3 +289,20 @@ def test_facebook_profile_post_needs_no_handle(tmp_path, monkeypatch):
     monkeypatch.setattr(core, "account", lambda db, i: acc)
     post = core.normalize(None, {"account": "facebook-petr", "kind": "facebook-post", "text": "Hello"})
     assert (post["target"], post["expected_name"]) == ("https://www.facebook.com/me", "Petr Chlup")
+
+
+def test_resolve_unknown_post(tmp_path, monkeypatch):
+    import sqlite3
+    from agent_reach.publisher import core, insights, store
+    monkeypatch.setattr(store, "log", lambda *a, **k: None)
+    monkeypatch.setattr(insights, "mark_sent", lambda *a, **k: None)
+    db = sqlite3.connect(":memory:"); db.row_factory = sqlite3.Row
+    db.execute("CREATE TABLE posts (id INTEGER PRIMARY KEY, account, payload, hash, author, due, status, result, created, finished, meta, url)")
+    db.execute("INSERT INTO posts (id, account, payload, status, url) VALUES (6, 'twitter-x', '{}', 'unknown', '')")
+    import pytest
+    with pytest.raises(core.Refused):
+        core.resolve(db, 6, {"outcome": "maybe"}, "Petr")
+    out = core.resolve(db, 6, {"outcome": "sent", "url": "https://x.com/a/status/1"}, "Petr")
+    assert out["status"] == "sent" and out["url"] == "https://x.com/a/status/1" and "checked by Petr" in out["result"]
+    with pytest.raises(core.Refused):  # only once, only from unknown
+        core.resolve(db, 6, {"outcome": "failed"}, "Petr")

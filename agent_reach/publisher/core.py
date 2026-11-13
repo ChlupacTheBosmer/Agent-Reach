@@ -343,6 +343,25 @@ def cancel(db, post_id: int, actor: str) -> dict:
     return get_post(db, post_id)
 
 
+def resolve(db, post_id: int, body: dict, actor: str) -> dict:
+    """A person looked at the account: an 'unknown' post did go out (sent, maybe with its link) or did not (failed)."""
+    outcome, url = body.get("outcome"), str(body.get("url") or "").strip()
+    if outcome not in ("sent", "failed"):
+        raise Refused("outcome is sent or failed")
+    if url and not url.startswith("https://"):
+        raise Refused("the link must start with https://")
+    note = f"{'went out' if outcome == 'sent' else 'did not go out'}, checked by {actor}"
+    n = db.execute("UPDATE posts SET status=?, result=?, url=COALESCE(NULLIF(?, ''), url) WHERE id=? AND status='unknown'",
+                   (outcome, f"{note}{': ' + url if url else ''}", url, post_id)).rowcount
+    if not n:
+        raise Refused("only a post with an unknown outcome can be resolved")
+    store.log(db, actor, "post.resolve", {"id": post_id, "outcome": outcome, "url": url})
+    if outcome == "sent" and url:
+        from . import insights
+        insights.mark_sent(db, get_post(db, post_id), f"posted: {url}")
+    return get_post(db, post_id)
+
+
 # ── running ──
 
 # ── one browser at a time ──

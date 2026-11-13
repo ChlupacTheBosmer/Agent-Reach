@@ -65,6 +65,7 @@ ROUTES = [
     ("POST", r"/v1/posts", lambda db, b, a, m: core.enqueue(db, b, a)),
     ("GET", r"/v1/posts/(\d+)", lambda db, b, a, m: core.get_post(db, int(m[1]))),
     ("POST", r"/v1/posts/(\d+)/cancel", lambda db, b, a, m: core.cancel(db, int(m[1]), a)),
+    ("POST", r"/v1/posts/(\d+)/resolve", lambda db, b, a, m: core.resolve(db, int(m[1]), b, a)),
     ("GET", r"/v1/posts", lambda db, b, a, m: [{**r, "payload": json.loads(r["payload"])} for r in store.rows(
         db.execute("SELECT * FROM posts ORDER BY id DESC LIMIT 200"))]),
     ("GET", r"/v1/log", lambda db, b, a, m: store.rows(db.execute("SELECT * FROM log ORDER BY id DESC LIMIT 500"))),
