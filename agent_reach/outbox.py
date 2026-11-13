@@ -397,8 +397,35 @@ def twitter(d: dict, send: bool) -> str:
         args += ["--images", ",".join(images)]
     elif images:
         args += ["--image", images[0]]
-    out = opencli_call("twitter", args, timeout=180)
+    try:
+        out = opencli_call("twitter", args, timeout=180)
+    except Exception as exc:  # noqa: BLE001
+        # OpenCLI waits for an English or Chinese "post sent" toast; a Czech X never shows one, so it times out
+        if d["kind"] != "twitter-post" or not re.search(r"timed out|did not complete|unconfirmed", str(exc), re.I):
+            raise
+        url = _x_find_on_timeline(want, d["text"])
+        if not url:
+            raise unknown(f"X did not confirm the post and it is not on @{want}'s timeline yet ({str(exc)[:80]})") from None
+        return f"posted: {url}"
     return "posted: " + json.dumps(out, ensure_ascii=False)[:300]
+
+
+def _x_find_on_timeline(handle: str, text: str) -> str:
+    """The URL of @handle's recent post whose text starts like `text`, or ''. Read-only."""
+    from agent_reach.backends.opencli import opencli_call
+    want = _norm(text)[:120].lower()
+    for _ in range(3):
+        time.sleep(8)
+        try:
+            rows = opencli_call("twitter", ["tweets", handle, "--limit", "5"], timeout=120)
+        except Exception:  # noqa: BLE001
+            continue
+        rows = rows if isinstance(rows, list) else (rows or {}).get("data", []) if isinstance(rows, dict) else []
+        for t in rows:
+            got = _norm(t.get("text", "")).lower()
+            if got and (got.startswith(want[:60]) or want.startswith(got[:60])):
+                return t.get("url", "") or f"https://x.com/{handle}"
+    return ""
 
 
 # ── Bluesky (official AT Protocol API with an app password) ──
@@ -522,6 +549,8 @@ def bluesky(d: dict, send: bool) -> str:
 #: the sidebar's Profile link points to the logged-in account
 IG_ME = r"""[...document.querySelectorAll('a[href]')].filter(a => /^(profile|profil)$/i.test((a.textContent || '').trim())).map(a => a.getAttribute('href')).join(' ')"""
 IG_COOKIES = r"""[...document.querySelectorAll('[role=dialog]')].some(d => /soubory cookie|cookies/i.test(d.innerText) && /povolit|allow|odmítnout|decline/i.test(d.innerText))"""
+#: "Zapnout upozornění" / "Turn on notifications": answered "Teď ne" / "Not now" (no setting changes)
+IG_NOTIFY_LATER = r"""(() => { const d = [...document.querySelectorAll('[role=dialog]')].find(d => /zapnout upozornění|turn on notifications/i.test(d.innerText)); return d ? [...d.querySelectorAll('button, [role=button]')].find(b => /^(teď ne|not now)$/i.test((b.innerText || '').trim())) : null; })()"""
 IG_CREATE = r"""(([...document.querySelectorAll('svg[aria-label]')].find(s => /^(nový příspěvek|new post|vytvořit|create)$/i.test(s.getAttribute('aria-label'))) || {closest: () => null}).closest('a, [role=link], [role=button]'))"""
 IG_TOP = r"""[...document.querySelectorAll('[role=dialog]')].pop()"""
 
@@ -558,6 +587,9 @@ def instagram(d: dict, send: bool) -> str:
         me = (tab.js(IG_ME) or "").lower()
         if f"/{want}/" not in me:
             raise SystemExit(f"the browser is not logged in to Instagram as @{want} (it shows {me[:60]!r}); refusing")
+        if tab.js(f"!!({IG_NOTIFY_LATER})"):
+            tab.click(IG_NOTIFY_LATER)
+            time.sleep(1.5)
         if not tab.click(IG_CREATE):
             raise SystemExit("no Create button on Instagram; nothing was posted")
         time.sleep(2)
@@ -615,7 +647,7 @@ def instagram(d: dict, send: bool) -> str:
 
 # ── LinkedIn posts: the profile's "Start a post", or a company page's admin "Create" ──
 
-LI_START = r"""[...document.querySelectorAll('[role=main] button, [role=main] [role=button], main button')].find(b => /^(start a post|začít příspěvek|začněte příspěvek|vytvořit příspěvek|create a post|create|vytvořit)$/i.test((b.innerText || b.getAttribute('aria-label') || '').trim()))"""
+LI_START = r"""[...document.querySelectorAll('main button, main [role=button], [role=main] button, [role=main] [role=button], main a, main div[tabindex], button, [role=button]')].find(b => /^(start a post|začít příspěvek|začněte příspěvek|vytvořit příspěvek|create a post|create|vytvořit)$/i.test((b.innerText || b.getAttribute('aria-label') || '').trim()))"""
 LI_MENU_POST = r"""[...document.querySelectorAll('[role=menu] [role=menuitem], [role=menu] button, .artdeco-dropdown__content button, .artdeco-dropdown__content [role=button]')].find(b => /^(start a post|začít příspěvek|příspěvek|post)$/i.test((b.innerText || '').trim()))"""
 LI_BOX = r"""[...document.querySelectorAll('[role=dialog] [role=textbox][contenteditable=true]')].pop()"""
 LI_DIALOG = f"(({LI_BOX}) || {{closest: () => null}}).closest('[role=dialog]')"

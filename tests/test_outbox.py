@@ -99,3 +99,26 @@ def test_bluesky_mentions_become_tags_and_unknown_handles_stay_text():
     mentions = [f for f in facets if f["features"][0]["$type"].endswith("#mention")]
     assert len(mentions) == 1 and mentions[0]["features"][0]["did"] == "did:plc:alice"
     assert raw[mentions[0]["index"]["byteStart"]:mentions[0]["index"]["byteEnd"]] == b"@alice.bsky.social"
+
+
+def test_x_unconfirmed_post_is_confirmed_on_the_timeline(monkeypatch):
+    """OpenCLI times out waiting for an English toast; the post is then found on the timeline and reported as posted."""
+    from agent_reach import outbox
+    from agent_reach.backends import opencli
+
+    class Tab:
+        def __init__(self, *a): pass
+        def wait(self, *a): return True
+        def js(self, *a): return "Petr @petaschlup"
+        def close(self): pass
+
+    def call(site, args, timeout):
+        if args[0] == "post":
+            raise RuntimeError("twitter post timed out after 15s")
+        return [{"text": "Hello V4AIR", "url": "https://x.com/petaschlup/status/1"}]
+
+    monkeypatch.setattr(outbox, "Tab", Tab)
+    monkeypatch.setattr(opencli, "opencli_call", call)
+    monkeypatch.setattr(outbox.time, "sleep", lambda s: None)
+    d = {"kind": "twitter-post", "target": "https://x.com/petaschlup", "expected_name": "petaschlup", "text": "Hello V4AIR", "media": []}
+    assert outbox.twitter(d, send=True) == "posted: https://x.com/petaschlup/status/1"
