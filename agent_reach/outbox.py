@@ -674,6 +674,14 @@ LI_DIALOG = f"""(() => {{ let e = ({LI_BOX}); while (e && !(e.querySelectorAll &
 LI_MEDIA = f"""[...((({LI_DIALOG}) || document.createElement('div')).querySelectorAll('button[aria-label]'))].find(b => /media|photo|médi|fotk/i.test(b.getAttribute('aria-label')))"""
 LI_FILE = r"""[...document.querySelectorAll('input[type=file]')].filter(f => /image/.test(f.accept || 'image')).pop()"""
 LI_NEXT = r"""[...document.querySelectorAll('[role=dialog] button, button')].find(b => /^(next|další|done|hotovo)$/i.test((b.innerText || '').trim()) && !b.disabled)"""
+#: the composer shows the author's name above the editor: walk up from the editor while the block stays small (the
+#: page itself also shows the name, in the profile card) until it holds both the name and the Post button
+LI_AUTHOR = f"""(() => {{ const name = NAME; let e = ({LI_BOX});
+  for (let i = 0; e && i < 16 && (e.innerText || '').length < 2000; i++, e = e.parentElement) {{
+    const t = (e.innerText || '').replace(/\\s+/g, ' ').toLowerCase();
+    if (t.includes(name) && [...e.querySelectorAll('button')].some(b => /^(post|zveřejnit|publikovat)$/i.test((b.innerText || '').trim()))) return true;
+  }}
+  return false; }})()"""
 LI_POST = f"""[...((({LI_DIALOG}) || document.createElement('div')).querySelectorAll('button'))].find(b => /^(post|zveřejnit|publikovat)$/i.test((b.innerText || '').trim()))"""
 
 
@@ -691,7 +699,7 @@ def linkedin_post(d: dict, send: bool) -> str:
             tab.click(LI_MENU_POST)
         if not tab.wait(LI_BOX, 30):
             raise SystemExit("the post editor did not open; nothing was posted")
-        if _norm(d["expected_name"]).lower() not in _norm(tab.js(f"(({LI_DIALOG}) || {{}}).innerText || ''") or "").lower():
+        if not tab.js(LI_AUTHOR.replace("NAME", json.dumps(_norm(d["expected_name"]).lower()))):
             tab.key("Escape")
             raise SystemExit(f"the editor does not show {d['expected_name']!r} as the author; refusing to post")
         images = [m["path"] for m in d.get("media") or []]
