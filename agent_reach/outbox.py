@@ -719,19 +719,7 @@ def linkedin_post(d: dict, send: bool) -> str:
             tab.key("Escape")
             raise SystemExit(f"the editor does not show {d['expected_name']!r} as the author; refusing to post")
         images = [m["path"] for m in d.get("media") or []]
-        if images:
-            tab.click(LI_MEDIA)
-            if not tab.wait(LI_FILE, 15):
-                raise SystemExit("no photo field in LinkedIn's editor; nothing was posted")
-            tab.upload(LI_FILE, images)
-            time.sleep(5)
-            for _ in range(2):  # LinkedIn shows a media step ("Next"/"Done") before returning to the text
-                if tab.js(f"!!({LI_BOX})") and not tab.js(f"!!({LI_NEXT})"):
-                    break
-                tab.click(LI_NEXT)
-                time.sleep(3)
-            if not tab.wait(LI_BOX, 30):
-                raise SystemExit("LinkedIn's editor did not come back after the photos; nothing was posted")
+        # the text goes in first, while the composer is fresh: after the photo step LinkedIn redraws it
         typed = ""
         for attempt in range(2):  # LinkedIn redraws the composer after photos; text typed before it has focus is lost
             time.sleep(1.5)
@@ -749,6 +737,23 @@ def linkedin_post(d: dict, send: bool) -> str:
                 break
         else:
             raise SystemExit(f"the editor does not contain the approved text (it shows {_norm(typed)[:60]!r}); nothing was posted")
+        if images:
+            tab.click(LI_MEDIA)
+            if not tab.wait(LI_FILE, 15):
+                raise SystemExit("no photo field in LinkedIn's editor; nothing was posted")
+            tab.upload(LI_FILE, images)
+            time.sleep(5)
+            for _ in range(2):  # LinkedIn shows a media step ("Next"/"Done") before returning to the text
+                if tab.js(f"!!({LI_BOX})") and not tab.js(f"!!({LI_NEXT})"):
+                    break
+                tab.click(LI_NEXT)
+                time.sleep(3)
+            if not tab.wait(LI_BOX, 30):
+                raise SystemExit("LinkedIn's editor did not come back after the photos; nothing was posted")
+        if images:  # the text must have survived the photo step
+            typed = tab.js(f"(() => {{ const x = {LI_BOX}; return x ? x.innerText : ''; }})()") or ""
+            if _norm(d["text"])[:200] not in _norm(typed):
+                raise SystemExit(f"LinkedIn dropped the text while adding the photos (it shows {_norm(typed)[:60]!r}); nothing was posted")
         if not tab.wait(f"(() => {{ const b = {LI_POST}; return !!b && !b.disabled; }})()", 60):
             raise SystemExit("the Post button is missing or disabled; nothing was posted")
         if not send:  # empty the editor first, so LinkedIn has no draft to keep
