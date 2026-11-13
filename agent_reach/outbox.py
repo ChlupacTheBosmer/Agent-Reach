@@ -216,6 +216,11 @@ def unknown(why: str) -> SystemExit:
     return SystemExit(f"UNKNOWN: {why}. It may have been posted: look at the page before sending anything again")
 
 
+#: the post box on a personal profile ("Co se vám honí hlavou?" with a question mark); the bubble on the profile picture
+#: ("Co se vám honí hlavou...") opens a 24-hour Note instead, so it is never the target
+PROFILE_PROMPT = r"""[...document.querySelectorAll('[role=main] [role=button] span')].filter(e => /^(co se vám honí hlavou|what's on your mind)\s*\?$/i.test((e.innerText || '').trim())).pop()"""
+#: a Facebook Note ("Nová poznámka"): not a post; the flow stops if one opens
+NOTE_DIALOG = r"""[...document.querySelectorAll('[role=dialog]')].some(d => /Nová poznámka|New note|poznámku na Messengeru|note on Messenger/i.test(d.innerText))"""
 #: the audience button in the post editor ("Veřejné", "Přátelé", "Public", "Friends"): reported, never changed
 AUDIENCE = f"""(([...((({EDITOR}) || document).querySelectorAll('[role=button][aria-label]'))].find(b => /okruh|soukrom|privacy|audience/i.test(b.getAttribute('aria-label'))) || {{}}).innerText || '').trim()"""
 
@@ -240,14 +245,18 @@ def facebook_group_post(d: dict, send: bool) -> str:
             if not tab.wait(PAGE_PROMPT, 20):
                 raise SystemExit("no owner composer ('What's on your mind') on the Page: this browser is not acting as "
                                  "the Page; nothing was posted")
-        elif profile and not tab.wait(PAGE_PROMPT, 30):
+        elif profile and not tab.wait(PROFILE_PROMPT, 30):
             raise SystemExit("no 'What's on your mind' box on the profile (not logged in, or acting as a Page); nothing was posted")
         elif not tab.wait(COMPOSER_BUTTON, 30):
             raise SystemExit("no 'Write something' box on the group page (not a member, or posting is closed)")
         if _norm(d["expected_name"]).lower() not in _norm(tab.js("document.title + ' ' + (document.querySelector('[role=main]')||document.body).innerText.slice(0, 3000)") or "").lower():
             raise SystemExit(f"the page does not show the name {d['expected_name']!r}; refusing to post")
         if page:
-            tab.click(PAGE_PROMPT)
+            tab.click(PROFILE_PROMPT if profile else PAGE_PROMPT)
+            time.sleep(2)
+            if tab.js(NOTE_DIALOG):
+                _discard(tab)
+                raise SystemExit("Facebook opened a Note instead of the post editor; nothing was posted")
         else:
             tab.js(f"(() => {{ const b = {COMPOSER_BUTTON}; b.click(); return true; }})()")
         if not tab.wait(COMPOSER_BOX, 30):
