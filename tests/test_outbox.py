@@ -46,7 +46,7 @@ def test_send_needs_the_shown_hash_and_records_the_result(tmp_path, monkeypatch)
     assert calls == [True]
     saved = outbox.parse((tmp_path / "x.md").read_text("utf-8"))
     assert saved["status"] == "sent" and "posted" in saved["result"]
-    with pytest.raises(SystemExit, match="already sent"):
+    with pytest.raises(SystemExit, match="this draft was sent"):
         outbox.main(["send", "x", "--sha", outbox.digest(saved)])
 
 

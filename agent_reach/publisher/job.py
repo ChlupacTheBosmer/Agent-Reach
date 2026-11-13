@@ -55,6 +55,14 @@ def _download(media: list, folder: Path) -> list:
     return out
 
 
+def groups(_payload: dict) -> dict:
+    from agent_reach.backends.opencli import opencli_call
+    rows = opencli_call("facebook", ["groups", "--limit", "60"], timeout=120)
+    rows = rows if isinstance(rows, list) else rows.get("data", []) if isinstance(rows, dict) else []
+    return {"ok": True, "result": [{"name": r.get("name", ""), "url": r.get("url", "")} for r in rows
+                                   if r.get("url", "").startswith("https://www.facebook.com/groups/")]}
+
+
 def publish(payload: dict) -> dict:
     from agent_reach import outbox
     from agent_reach.runtime import pacing
@@ -78,13 +86,15 @@ def publish(payload: dict) -> dict:
 def main() -> int:
     command = sys.argv[1] if len(sys.argv) > 1 else ""
     payload = json.loads(sys.stdin.read() or "{}")
-    step = {"configure": configure, "check": check, "publish": publish}.get(command)
+    step = {"configure": configure, "check": check, "publish": publish, "groups": groups}.get(command)
     try:
         out = step(payload) if step else {"ok": False, "error": f"unknown command {command!r}"}
     except SystemExit as exc:
         out = {"ok": False, "error": str(exc)}
     except Exception as exc:  # noqa: BLE001 - report, never crash the queue
-        out = {"ok": False, "error": f"{type(exc).__name__}: {exc}"[:600]}
+        # an unexpected error during publish may come after the post went out
+        prefix = "UNKNOWN: " if command == "publish" else ""
+        out = {"ok": False, "error": f"{prefix}{type(exc).__name__}: {exc}"[:600]}
     print(json.dumps(out, ensure_ascii=False))
     return 0
 

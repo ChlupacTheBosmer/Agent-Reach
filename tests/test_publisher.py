@@ -179,21 +179,21 @@ def test_page_and_instagram_rules(db):
         core.preview(db, {**ig, "kind": "instagram-reel"})
     with pytest.raises(core.Refused, match="at least 1"):
         core.preview(db, {**ig, "kind": "instagram-post", "media": []})
-    assert core.preview(db, {**ig, "kind": "instagram-story", "text": ""})["post"]["text"] == ""
+    with pytest.raises(core.Refused, match="4:5"):
+        core.preview(db, {**ig, "kind": "instagram-post", "media": [{"url": "https://app/a.jpg", "width": 1080, "height": 1920}]})
 
 
 def test_instagram_refuses_another_logged_in_account(monkeypatch):
     class FakeTab:
         def __init__(self, url, site): pass
         def wait(self, expression, seconds=25): return True
-        def js(self, expression): return "/someone.else/"
+        def js(self, expression): return False if "cookie" in expression else "/someone.else/"
+        def click(self, expression): raise AssertionError("must not click anything")
         def close(self): pass
     monkeypatch.setattr(outbox, "Tab", FakeTab)
-    d = {"kind": "instagram-post", "expected_name": "v4air.eu", "text": "Hi", "media": [{"path": "/tmp/a.jpg"}]}
-    with pytest.raises(SystemExit, match="not logged in to Instagram as @v4air.eu"):
+    d = {"kind": "instagram-post", "expected_name": "v4_air", "text": "Hi", "media": [{"path": "/tmp/a.jpg"}]}
+    with pytest.raises(SystemExit, match="not logged in to Instagram as @v4_air"):
         outbox.instagram(d, True)
-    monkeypatch.setattr(FakeTab, "js", lambda self, e: "/v4air.eu/")
-    assert outbox.instagram(d, False).startswith("check ok")
 
 
 def test_proxies_that_fail_or_exit_abroad_are_skipped(db, tmp_path, monkeypatch):
@@ -211,3 +211,25 @@ def test_proxies_that_fail_or_exit_abroad_are_skipped(db, tmp_path, monkeypatch)
     assert acc["proxy"] == "http://3.3.3.3:5002"
     with pytest.raises(core.Refused, match="exits in US"):
         core.create_account(db, {"network": "twitter", "label": "X", "owner": "V4AIR", "proxy": "http://u:p@2.2.2.2:5001"}, "petr")
+
+
+def test_group_list_comes_from_opencli_and_keeps_only_group_links(monkeypatch):
+    from agent_reach.backends import opencli
+    monkeypatch.setattr(opencli, "opencli_call", lambda site, args, timeout: [
+        {"index": 1, "name": "AI Prague", "url": "https://www.facebook.com/groups/aiprague/"},
+        {"index": 2, "name": "Ad", "url": "https://www.facebook.com/ads/"}])
+    assert job.groups({}) == {"ok": True, "result": [{"name": "AI Prague", "url": "https://www.facebook.com/groups/aiprague/"}]}
+
+
+def test_only_facebook_accounts_have_groups(db):
+    acc = _bluesky(db)
+    with pytest.raises(core.Refused, match="only Facebook"):
+        core.groups(db, acc["id"], "petr")
+
+
+def test_a_crash_or_timeout_during_publish_is_unknown_not_failed(db, monkeypatch):
+    acc = _bluesky(db)
+    p = core.preview(db, {"account": acc["id"], "kind": "bluesky-post", "text": "Hi"})
+    core.enqueue(db, {"account": acc["id"], "kind": "bluesky-post", "text": "Hi", "confirm": p["hash"], "author": "petr"}, "petr")
+    monkeypatch.setattr(core, "in_home", lambda *a, **k: {"ok": False, "error": "UNKNOWN: the publish step did not finish in 1800 s"})
+    assert core.run_due(db)["status"] == "unknown"

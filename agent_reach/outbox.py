@@ -35,7 +35,7 @@ from pathlib import Path
 
 KINDS = ("facebook-group-post", "facebook-page-post", "facebook-message", "linkedin-message", "linkedin-connect",
          "twitter-post", "twitter-reply", "bluesky-post", "bluesky-reply", "bluesky-message",
-         "instagram-post", "instagram-reel", "instagram-story")
+         "instagram-post", "instagram-reel")
 HOSTS = {"facebook": "facebook.com", "linkedin": "linkedin.com", "twitter": "x.com", "bluesky": "bsky.app",
          "instagram": "instagram.com"}
 FIELDS = ("kind", "target", "expected_name", "status", "created", "result")
@@ -93,7 +93,7 @@ def load(draft: str) -> tuple[Path, dict]:
 def validate(d: dict) -> None:
     if d["kind"] not in KINDS:
         raise SystemExit(f"unknown kind {d['kind']!r}; one of {', '.join(KINDS)}")
-    if not d["text"].strip() and d["kind"] != "instagram-story":  # a story is only the picture or video
+    if not d["text"].strip():
         raise SystemExit("the draft has no text")
     if not d["expected_name"]:
         raise SystemExit("expected_name is required: the name the page must show, so nothing goes to the wrong place")
@@ -102,6 +102,8 @@ def validate(d: dict) -> None:
         raise SystemExit(f"target must be a {host} URL")
     if d["kind"].startswith(("twitter", "bluesky")) and d["kind"] != "bluesky-message" and len(d["text"]) > (280 if d["kind"].startswith("twitter") else 300):
         raise SystemExit(f"too long for {d['kind'].split('-')[0]} ({len(d['text'])} characters)")
+    if d["kind"].startswith(("twitter", "linkedin")) and d["text"].lstrip().startswith("-"):
+        raise SystemExit("the text must not start with '-' (the posting tool would read it as an option)")
     if d["kind"] == "linkedin-connect" and len(d["text"]) > 300:
         raise SystemExit(f"a LinkedIn connection note is at most 300 characters (this one has {len(d['text'])})")
 
@@ -152,6 +154,19 @@ class Tab:
                                                      "windowsVirtualKeyCode": 13, "nativeVirtualKeyCode": 13},
                           target_id=self.id)
 
+    def click(self, expression: str) -> bool:
+        """A real mouse click in the middle of the element `expression` returns (scrolled into view first)."""
+        box = self.js(f"(() => {{ const e = ({expression}); if (!e) return null; e.scrollIntoView({{block: 'center'}}); "
+                      "const r = e.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; })()")
+        if not box:
+            return False
+        time.sleep(0.4)
+        for kind in ("mouseMoved", "mousePressed", "mouseReleased"):
+            self.cdp.call("Input.dispatchMouseEvent", {"type": kind, "x": box[0], "y": box[1], "button": "left",
+                                                       "clickCount": 0 if kind == "mouseMoved" else 1}, target_id=self.id)
+            time.sleep(0.08)
+        return True
+
     def upload(self, expression: str, paths: list) -> None:
         """Put local files into the file input that `expression` returns, as a person picking them would."""
         res = self.cdp.call("Runtime.evaluate", {"expression": expression}, target_id=self.id) or {}
@@ -173,15 +188,27 @@ def _norm(s: str) -> str:
 
 # ── Facebook ──
 
-COMPOSER_BUTTON = r"""[...document.querySelectorAll('[role=button]')].find(b => /^(napište něco|write something|vytvořte veřejný příspěvek|create a public post)/i.test((b.innerText || '').trim()))"""
-COMPOSER_BOX = r"""[...document.querySelectorAll('[role=dialog] [role=textbox][contenteditable=true]')].find(x => /napište|write|something/i.test(x.getAttribute('aria-placeholder') || x.getAttribute('aria-label') || ''))"""
+COMPOSER_BUTTON = r"""[...document.querySelectorAll('[role=main] [role=button]')].find(b => /^(napište něco|write something|vytvořte veřejný příspěvek|create a public post|co se vám honí hlavou|what's on your mind)/i.test((b.innerText || '').trim()))"""
+COMPOSER_BOX = r"""[...document.querySelectorAll('[role=dialog] [role=textbox][contenteditable=true]')].find(x => /napište|write|something|honí hlavou|on your mind/i.test(x.getAttribute('aria-placeholder') || x.getAttribute('aria-label') || ''))"""
 POST_BUTTON = r"""[...document.querySelectorAll('[role=dialog] [role=button][aria-label]')].find(b => /^(zveřejnit|post|publikovat)$/i.test(b.getAttribute('aria-label')))"""
 
 
 #: Facebook shows this to a person who manages a Page but has not switched into it
-SWITCH_PROMPT = r"/Switch now|Switch into|Přepnout teď|Přepnout na|Přepnout do/i.test((document.querySelector('[role=main]')||document.body).innerText)"
-PHOTO_BUTTON = r"""[...document.querySelectorAll('[role=dialog] [role=button][aria-label]')].find(b => /photo|fotk/i.test(b.getAttribute('aria-label')))"""
-DIALOG_FILE = "document.querySelector('[role=dialog] input[type=file]')"
+SWITCH_PROMPT = r"/Přepněte na stránku|Switch into .{0,80}Page|Switch to .{0,80}Page|Switch now|Přepnout teď/i.test((document.querySelector('[role=main]')||document.body).innerText)"
+#: the owner's composer on a Page ("What's on your mind"); a visitor sees "Write something to ..." instead
+PAGE_PROMPT = r"""[...document.querySelectorAll('[role=main] [role=button] span')].find(e => /^(co se vám honí hlavou|what's on your mind)/i.test((e.innerText || '').trim()))"""
+#: a dialog only a person should answer (it carries their choices, e.g. marketing e-mails)
+BLOCKING_DIALOG = r"""[...document.querySelectorAll('[role=dialog]')].map(d => d.innerText).find(t => /Vítejte na své nové stránce|Welcome to your new Page/i.test(t))"""
+EDITOR = f"(({COMPOSER_BOX}) || {{closest: () => null}}).closest('[role=dialog]')"
+PHOTO_BUTTON = f"""[...((({EDITOR}) || document).querySelectorAll('[role=button][aria-label]'))].find(b => /photo|fotk/i.test(b.getAttribute('aria-label')))"""
+DIALOG_FILE = f"""[...((({EDITOR}) || document.createElement('div')).querySelectorAll('input[type=file]'))].find(f => /image/.test(f.accept || 'image'))"""
+EDITOR_IMAGES = f"""[...((({EDITOR}) || document.createElement('div')).querySelectorAll('img'))].filter(i => /^blob:/.test(i.src)).length"""
+POST_READY = f"(() => {{ const b = {POST_BUTTON}; return !!b && b.getAttribute('aria-disabled') !== 'true'; }})()"
+
+
+def unknown(why: str) -> SystemExit:
+    """After Post was pressed nobody knows for sure; never send again before looking at the page."""
+    return SystemExit(f"UNKNOWN: {why}. It may have been posted: look at the page before sending anything again")
 
 
 def facebook_group_post(d: dict, send: bool) -> str:
@@ -189,17 +216,32 @@ def facebook_group_post(d: dict, send: bool) -> str:
     page = d["kind"] == "facebook-page-post"
     tab = Tab(d["target"], "facebook")
     try:
-        if page and tab.wait(SWITCH_PROMPT, 8):
-            raise SystemExit("this browser is logged in as a person, not as the Page: switch into the Page once in the "
-                             "login view (profile menu > the Page), then try again; nothing was posted")
-        if not tab.wait(COMPOSER_BUTTON, 30):
-            raise SystemExit("no 'Write something' box on the page" if page else
-                             "no 'Write something' box on the group page (not a member, or posting is closed)")
+        tab.wait("document.querySelector('[role=main]')", 30)
+        time.sleep(3)
+        if page:
+            if tab.js(SWITCH_PROMPT):
+                raise SystemExit("this browser acts as a person, not as the Page: switch into the Page once in the "
+                                 "login view (profile menu > the Page), then try again; nothing was posted")
+            blocking = tab.js(BLOCKING_DIALOG)
+            if blocking:
+                raise SystemExit(f"Facebook shows a dialog a person must answer first ({_norm(blocking)[:60]!r}): open the "
+                                 "login view and answer it; nothing was posted")
+            if not tab.wait(PAGE_PROMPT, 20):
+                raise SystemExit("no owner composer ('What's on your mind') on the Page: this browser is not acting as "
+                                 "the Page; nothing was posted")
+        elif not tab.wait(COMPOSER_BUTTON, 30):
+            raise SystemExit("no 'Write something' box on the group page (not a member, or posting is closed)")
         if _norm(d["expected_name"]).lower() not in _norm(tab.js("document.title + ' ' + (document.querySelector('[role=main]')||document.body).innerText.slice(0, 3000)") or "").lower():
-            raise SystemExit(f"the page does not show the group name {d['expected_name']!r}; refusing to post")
-        tab.js(f"(() => {{ const b = {COMPOSER_BUTTON}; b.click(); return true; }})()")
+            raise SystemExit(f"the page does not show the name {d['expected_name']!r}; refusing to post")
+        if page:
+            tab.click(PAGE_PROMPT)
+        else:
+            tab.js(f"(() => {{ const b = {COMPOSER_BUTTON}; b.click(); return true; }})()")
         if not tab.wait(COMPOSER_BOX, 30):
             raise SystemExit("the post editor did not open")
+        if page and _norm(d["expected_name"]).lower() not in _norm(tab.js(f"(({EDITOR}) || {{}}).innerText || ''") or "").lower():
+            _discard(tab)
+            raise SystemExit("the editor does not show the Page as the author; refusing to post")
         tab.js(f"(() => {{ const x = {COMPOSER_BOX}; x.focus(); x.click(); return true; }})()")
         tab.type_lines(d["text"], newline_shift=False)
         time.sleep(1.5)
@@ -209,23 +251,21 @@ def facebook_group_post(d: dict, send: bool) -> str:
         images = [m["path"] for m in d.get("media") or []]
         if images:
             if not tab.js(f"!!({DIALOG_FILE})"):
-                tab.js(f"(() => {{ const b = {PHOTO_BUTTON}; b && b.click(); return !!b; }})()")
+                tab.click(PHOTO_BUTTON)
             if not tab.wait(DIALOG_FILE, 15):
                 raise SystemExit("the editor has no photo field; nothing was posted")
-            before = tab.js("document.querySelectorAll('[role=dialog] img').length") or 0
             tab.upload(DIALOG_FILE, images)
-            if not tab.wait(f"document.querySelectorAll('[role=dialog] img').length >= {before + len(images)}", 60):
+            if not tab.wait(f"({EDITOR_IMAGES}) >= {len(images)}", 90):
                 raise SystemExit("the photos did not appear in the editor; nothing was posted")
-            time.sleep(2)
-        if not tab.js(f"!!({POST_BUTTON})"):
-            raise SystemExit("no Post button in the editor")
+        if not tab.wait(POST_READY, 90):
+            raise SystemExit("the Post button is missing or stays disabled; nothing was posted")
         if not send:
             _discard(tab)
-            return (f"check ok: {'Page' if page else 'group'} found, editor opened, text"
-                    f"{' and photos' if images else ''} in, Post button present; draft discarded, nothing posted")
+            return (f"check ok: {'Page' if page else 'group'} found, editor opened{' as the Page' if page else ''}, text"
+                    f"{' and photos' if images else ''} in, Post button ready; draft discarded, nothing posted")
         tab.js(f"(() => {{ {POST_BUTTON}.click(); return true; }})()")
-        if not tab.wait(f"!({COMPOSER_BOX})", 40):
-            raise SystemExit("the editor did not close after Post; check the group in `agent-reach login facebook`")
+        if not tab.wait(f"!({COMPOSER_BOX})", 60):
+            raise unknown("the editor did not close after Post")
         time.sleep(3)
         pending = tab.js(r"/čeká na schválení|pending|awaiting approval|schválit/i.test(document.body.innerText)")
         return "posted, waiting for admin approval" if pending else "posted"
@@ -445,40 +485,104 @@ def bluesky(d: dict, send: bool) -> str:
     return f"posted: https://bsky.app/profile/{me}/post/{rkey}"
 
 
-# ── Instagram (OpenCLI's post, reel and story in the logged-in browser) ──
+# ── Instagram (instagram.com's own Create flow in the account's browser, like a person) ──
 
 #: the sidebar's Profile link points to the logged-in account
 IG_ME = r"""[...document.querySelectorAll('a[href]')].filter(a => /^(profile|profil)$/i.test((a.textContent || '').trim())).map(a => a.getAttribute('href')).join(' ')"""
+IG_COOKIES = r"""[...document.querySelectorAll('[role=dialog]')].some(d => /soubory cookie|cookies/i.test(d.innerText) && /povolit|allow|odmítnout|decline/i.test(d.innerText))"""
+IG_CREATE = r"""(([...document.querySelectorAll('svg[aria-label]')].find(s => /^(nový příspěvek|new post|vytvořit|create)$/i.test(s.getAttribute('aria-label'))) || {closest: () => null}).closest('a, [role=link], [role=button]'))"""
+IG_TOP = r"""[...document.querySelectorAll('[role=dialog]')].pop()"""
+
+
+def _ig_button(pattern: str) -> str:
+    return (r"""[...((""" + IG_TOP + r""") || document).querySelectorAll('[role=button], button')].reverse()"""
+            rf""".find(b => /^({pattern})$/i.test(((b.innerText || '').trim() || b.getAttribute('aria-label') || '')))""")
+
+
+IG_FILE = r"""[...document.querySelectorAll('[role=dialog] input[type=file]')].pop()"""
+IG_CAPTION = r"""[...document.querySelectorAll('[role=dialog] [contenteditable=true]')].find(x => /popis|caption/i.test(x.getAttribute('aria-label') || x.getAttribute('aria-placeholder') || ''))"""
+IG_ALT = r"""[...document.querySelectorAll('[role=dialog] input')].filter(i => /alternativní|alt text/i.test(i.getAttribute('placeholder') || i.getAttribute('aria-label') || ''))"""
+IG_DONE = r"""/byl sdílen|byla sdílena|byl zveřejněn|has been shared|post shared|reel shared|was shared/i.test(((""" + IG_TOP + r""") || {}).innerText || '')"""
+
+
+def _ig_close(tab: "Tab") -> None:
+    tab.click(_ig_button("zavřít|close"))
+    time.sleep(1.5)
+    tab.click(_ig_button("zahodit|discard"))
+    time.sleep(1.5)
 
 
 def instagram(d: dict, send: bool) -> str:
-    from agent_reach.backends.opencli import opencli_call
     want = _handle(d["expected_name"])
-    tab = Tab("https://www.instagram.com/", "instagram")
-    try:
-        tab.wait(IG_ME, 30)
-        me = (tab.js(IG_ME) or "").lower()
-    finally:
-        tab.close()
-    if f"/{want}/" not in me:
-        raise SystemExit(f"the browser is not logged in to Instagram as @{want} (it shows {me[:60]!r}); refusing")
     media = [m["path"] for m in d.get("media") or []]
     if not media:
         raise SystemExit("an Instagram post needs a photo or a video")
-    if not send:
-        return f"check ok: logged in as @{want}, {len(media)} media file(s) ready; nothing posted"
-    if d["kind"] == "instagram-reel":
-        args = ["reel", "--video", media[0]] + ([d["text"]] if d["text"] else [])
-    elif d["kind"] == "instagram-story":
-        args = ["story", "--media", media[0]]
-    else:
-        args = ["post", "--media", ",".join(media)] + ([d["text"]] if d["text"] else [])
-    out = opencli_call("instagram", args, timeout=900)
-    return "posted: " + json.dumps(out, ensure_ascii=False)[:300]
+    tab = Tab("https://www.instagram.com/", "instagram")
+    try:
+        tab.wait("document.querySelector('svg[aria-label]')", 30)
+        time.sleep(3)
+        if tab.js(IG_COOKIES):
+            raise SystemExit("Instagram asks about cookies: a person answers that once in the login view; nothing was posted")
+        me = (tab.js(IG_ME) or "").lower()
+        if f"/{want}/" not in me:
+            raise SystemExit(f"the browser is not logged in to Instagram as @{want} (it shows {me[:60]!r}); refusing")
+        if not tab.click(IG_CREATE):
+            raise SystemExit("no Create button on Instagram; nothing was posted")
+        time.sleep(2)
+        tab.click(_ig_button("příspěvek|post"))  # newer layouts open a small menu first
+        if not tab.wait(IG_FILE, 20):
+            raise SystemExit("Instagram's Create dialog did not open; nothing was posted")
+        tab.upload(IG_FILE, media)
+        time.sleep(6)
+        tab.click(_ig_button("ok|rozumím"))  # "video posts are now shared as reels"
+        if tab.click(r"""[...document.querySelectorAll('[role=dialog] svg[aria-label]')].find(s => /oříznutí|crop/i.test(s.getAttribute('aria-label')))"""):
+            time.sleep(1)
+            tab.click(_ig_button("původní|original"))  # keep the picture as approved, no square crop
+        for _ in range(3):
+            if tab.js(f"!!({IG_CAPTION})"):
+                break
+            if not tab.click(_ig_button("další|next")):
+                break
+            time.sleep(4)
+        if not tab.wait(IG_CAPTION, 30):
+            _ig_close(tab)
+            raise SystemExit("Instagram did not reach the caption step; nothing was posted")
+        if d["text"]:
+            tab.js(f"(() => {{ const x = {IG_CAPTION}; x.focus(); x.click(); return true; }})()")
+            tab.type_lines(d["text"], newline_shift=False)
+            time.sleep(1.5)
+            typed = tab.js(f"(() => {{ const x = {IG_CAPTION}; return x ? x.innerText : ''; }})()") or ""
+            if _norm(d["text"])[:200] not in _norm(typed):
+                _ig_close(tab)
+                raise SystemExit("the caption field does not contain the approved text; nothing was posted")
+        alts = [m.get("alt") or "" for m in d.get("media") or []]
+        if any(alts):
+            tab.click(_ig_button("přístupnost|accessibility"))
+            time.sleep(1.5)
+            n = tab.js(f"({IG_ALT}).length") or 0
+            for i, alt in enumerate(alts[:n]):
+                if alt:
+                    tab.js(f"(() => {{ const x = ({IG_ALT})[{i}]; x.focus(); x.click(); return true; }})()")
+                    tab.cdp.call("Input.insertText", {"text": alt}, target_id=tab.id)
+        share = _ig_button("sdílet|share")
+        if not tab.js(f"!!({share})"):
+            _ig_close(tab)
+            raise SystemExit("no Share button in Instagram's dialog; nothing was posted")
+        if not send:
+            _ig_close(tab)
+            return f"check ok: logged in as @{want}, {len(media)} file(s) in, caption typed, Share present; discarded, nothing posted"
+        tab.click(share)
+        if not tab.wait(IG_DONE, 240):
+            raise unknown("Instagram did not confirm the post within 4 minutes")
+        time.sleep(2)
+        tab.click(_ig_button("zavřít|close"))
+        return f"posted: https://www.instagram.com/{want}/"
+    finally:
+        tab.close()
 
 
 SENDERS = {"facebook-group-post": facebook_group_post, "facebook-page-post": facebook_group_post,
-           "instagram-post": instagram, "instagram-reel": instagram, "instagram-story": instagram,
+           "instagram-post": instagram, "instagram-reel": instagram,
            "facebook-message": facebook_message,
            "linkedin-message": linkedin, "linkedin-connect": linkedin,
            "twitter-post": twitter, "twitter-reply": twitter,
@@ -530,8 +634,9 @@ def _run(draft: str, send: bool, sha: str = "") -> int:
     p, d = load(draft)
     validate(d)
     if send:
-        if d["status"] == "sent":
-            raise SystemExit("this draft was already sent; make a new draft")
+        if d["status"] in ("sent", "unknown"):
+            raise SystemExit(f"this draft was {d['status']}{' (it may have gone out)' if d['status'] == 'unknown' else ''}; "
+                             "look at the page, then make a new draft if needed")
         if sha != digest(d):
             raise SystemExit(f"--sha {sha!r} does not match the draft ({digest(d)}): it changed since it was shown; "
                              "show it again and get a new approval")
@@ -541,9 +646,10 @@ def _run(draft: str, send: bool, sha: str = "") -> int:
         pacing.before(site)  # at most a few posts/messages a day, never in a burst
     try:
         result = SENDERS[d["kind"]](d, send)
-    except SystemExit as exc:
+    except BaseException as exc:  # noqa: BLE001 - whatever happened, the draft records it
         if send:
-            d.update(status="failed", result=f"{dt.datetime.now():%Y-%m-%d %H:%M} {exc}")
+            state = "unknown" if str(exc).startswith("UNKNOWN") or not isinstance(exc, SystemExit) else "failed"
+            d.update(status=state, result=f"{dt.datetime.now():%Y-%m-%d %H:%M} {type(exc).__name__}: {exc}")
             p.write_text(render(d), "utf-8")
         raise
     if send:

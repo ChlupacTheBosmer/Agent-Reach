@@ -6,6 +6,7 @@ extension + local daemon. Agent Reach uses one shared, Reach-owned browser profi
 """
 
 import json
+import os
 
 OPENCLI_EXTENSION_ID = "ildkmabpimmkaediidaifkhjpohdnifk"
 OPENCLI_EXTENSION_URL = (
@@ -63,6 +64,11 @@ def opencli_call(site: str, args, *, timeout: float, login_hint: str = ""):
     from agent_reach.runtime.run import CommandFailed, run_cmd
 
     env = environment(site)
+    from agent_reach.config import Config
+    proxy = str(Config(read_only=True).get("proxy") or "")
+    if proxy:  # fork: OpenCLI's own Node requests must leave from the account's address, like its browser
+        env = {**(env or os.environ), "HTTPS_PROXY": proxy, "HTTP_PROXY": proxy, "NO_PROXY": "localhost,127.0.0.1,::1"}
+    env = {k: v for k, v in (env or os.environ).items() if k != "OPENCLI_INSTAGRAM_CAPTURE"}
     argv = ["opencli", site, *args, "-f", "json"]
     pacing.before(site)  # fork: human pace, daily cap, pause after blocks
 

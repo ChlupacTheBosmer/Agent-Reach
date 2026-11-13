@@ -28,8 +28,7 @@ NETWORKS = {
         "facebook-page-post": {"text": 5000, "images": 10, "target": "own", "media": "image"}}},
     "instagram": {"route": "browser", "kinds": {
         "instagram-post": {"text": 2200, "images": 10, "min_media": 1, "target": "own", "media": "image or video"},
-        "instagram-reel": {"text": 2200, "images": 1, "min_media": 1, "target": "own", "media": "video"},
-        "instagram-story": {"text": 0, "images": 1, "min_media": 1, "target": "own", "media": "image or video"}}},
+        "instagram-reel": {"text": 2200, "images": 1, "min_media": 1, "target": "own", "media": "video"}}},
     "linkedin": {"route": "browser", "kinds": {
         "linkedin-message": {"text": 2000, "images": 0, "target": "thread"},
         "linkedin-connect": {"text": 300, "images": 0, "target": "person"}}},
@@ -168,6 +167,18 @@ def set_credentials(db, account_id: str, body: dict, actor: str) -> dict:
     return public(account(db, account_id))
 
 
+def groups(db, account_id: str, actor: str) -> list:
+    """The Facebook groups this account is a member of, for the composer's group dropdown (one paced read)."""
+    acc = account(db, account_id)
+    if acc["network"] != "facebook":
+        raise Refused("only Facebook accounts have groups")
+    out = in_home(account_id, "groups", {})
+    if not out.get("ok"):
+        raise Refused(out.get("error") or "could not read the groups")
+    store.log(db, actor, "account.groups", {"account": account_id, "count": len(out["result"])})
+    return out["result"]
+
+
 def check_account(db, account_id: str, actor: str) -> dict:
     out = in_home(account_id, "check", {})
     status = "ok" if out.get("ok") else ("needs-login" if account(db, account_id)["route"] == "browser" else "needs-credentials")
@@ -200,6 +211,11 @@ def normalize(db, body: dict) -> dict:
         raise Refused(f"{kind} needs an MP4 video")
     if spec.get("media", "image") == "image" and video:
         raise Refused(f"{kind} takes images only")
+    if acc["network"] == "instagram":
+        for i, m in enumerate(body.get("media") or []):
+            w, h = m.get("width"), m.get("height")
+            if w and h and not 0.8 <= w / h <= 1.91:
+                raise Refused(f"image {i + 1} is {w}x{h}: Instagram takes 4:5 (portrait) to 1.91:1 (landscape) without cropping")
     for m in media:
         if urlsplit(m["url"]).scheme != "https":
             raise Refused("media must be https URLs")
@@ -275,8 +291,11 @@ def in_home(account_id: str, command: str, payload: dict, timeout: float = 120) 
     h = home(account_id)
     h.mkdir(parents=True, exist_ok=True)
     env = {**os.environ, "HOME": str(h), "PUBLISHER_ACCOUNT": account_id, "PUBLISHER_DATA": str(store.data_dir())}
-    p = subprocess.run([sys.executable, "-m", "agent_reach.publisher.job", command], input=json.dumps(payload),
-                       capture_output=True, text=True, timeout=timeout, env=env)
+    try:
+        p = subprocess.run([sys.executable, "-m", "agent_reach.publisher.job", command], input=json.dumps(payload),
+                           capture_output=True, text=True, timeout=timeout, env=env)
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": f"UNKNOWN: the {command} step did not finish in {timeout:.0f} s"}
     try:
         return json.loads(p.stdout.strip().splitlines()[-1])
     except (ValueError, IndexError):
@@ -292,8 +311,10 @@ def run_due(db, now=None) -> dict | None:
     if not db.execute("UPDATE posts SET status='running' WHERE id=? AND status='queued'", (row["id"],)).rowcount:
         return None
     post = get_post(db, row["id"])
-    out = in_home(post["account"], "publish", {"post": post["payload"]}, timeout=900)
-    status = "sent" if out.get("ok") else "failed"  # a failed post is never retried automatically
+    out = in_home(post["account"], "publish", {"post": post["payload"]}, timeout=1800)  # pacing waits + upload
+    err = str(out.get("error") or "")
+    # never retried automatically; 'unknown' = it may be out, a person looks before anything is sent again
+    status = "sent" if out.get("ok") else "unknown" if err.startswith("UNKNOWN") or "Traceback" in err else "failed"
     db.execute("UPDATE posts SET status=?, result=?, finished=? WHERE id=?",
                (status, out.get("result") or out.get("error") or "", time.time(), row["id"]))
     store.log(db, "publisher", f"post.{status}", {"id": row["id"], **out})
