@@ -74,9 +74,6 @@ def _drop_stale_profile_lock(profile: Path) -> None:
                 (profile / name).unlink()
 
 
-VIEW_SIZE = (1280, 880)
-
-
 def open_view(payload: dict) -> dict:
     """Open the account's browser (headless, through its proxy) on the login page; the server streams it."""
     from agent_reach.runtime import browser, cdp
@@ -87,10 +84,8 @@ def open_view(payload: dict) -> dict:
         raise SystemExit("could not open a page in the account's browser")
     import time
     time.sleep(1.0)  # let the launcher attach (it answers the proxy's login), then load the page
-    # a laptop-sized window: the picture in the app is then about life size (1920 px made it tiny, popups made it huge)
-    win = (cdp.call("Browser.getWindowForTarget", {"targetId": target}) or {}).get("windowId")
-    if win:
-        cdp.call("Browser.setWindowBounds", {"windowId": win, "bounds": {"width": VIEW_SIZE[0], "height": VIEW_SIZE[1], "windowState": "normal"}})
+    # the window keeps CloakBrowser's size (a maximised 1080p screen): resizing only the outer window gave sites a
+    # 1280 px window holding a 1920 px page, which no real browser shows
     cdp.call("Page.navigate", {"url": url}, target_id=target)
     browser.touch()
     return {"ok": True, "result": target}

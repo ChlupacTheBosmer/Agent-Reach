@@ -11,7 +11,9 @@ import argparse
 import hashlib
 import hmac
 import json
+import contextlib
 import os
+from pathlib import Path
 import re
 import threading
 import time
@@ -142,6 +144,19 @@ def scheduler(stop: threading.Event, every: float = 10.0) -> None:
         stop.wait(every)
 
 
+def _warm_browser_files() -> None:
+    """Read the browser's program files once after a start: they live on network storage, and a cold first launch
+    read them all on demand (about 25 s instead of 4 s)."""
+    root = Path(os.environ.get("PUBLISHER_TOOLS", "/data/tools")) / "cloak-binaries"
+    t, n = time.time(), 0
+    for f in root.rglob("*"):
+        if f.is_file() and not f.is_symlink():
+            with contextlib.suppress(OSError), open(f, "rb") as fh:
+                while chunk := fh.read(1 << 20):
+                    n += len(chunk)
+    print(f"browser files warmed: {n >> 20} MB in {time.time() - t:.0f} s", flush=True)
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="agent-reach-publisher")
     ap.add_argument("--host", default=os.environ.get("PUBLISHER_HOST", "127.0.0.1"))
@@ -153,8 +168,10 @@ def main(argv=None) -> int:
     Handler.secret = secret
     store.connect().close()
     db = store.connect()
-    db.execute("UPDATE posts SET status='failed', result='interrupted by a restart; not retried' WHERE status='running'")
+    # a post that was being sent when the server stopped may be out already: a person looks (never 'failed', never re-sent)
+    db.execute("UPDATE posts SET status='unknown', result='UNKNOWN: interrupted by a restart while sending; it may have gone out, look at the account' WHERE status='running'")
     db.close()
+    threading.Thread(target=_warm_browser_files, daemon=True).start()
     stop = threading.Event()
     threading.Thread(target=scheduler, args=(stop,), daemon=True).start()
     print(f"publisher on {a.host}:{a.port}, data {store.data_dir()}", flush=True)

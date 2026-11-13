@@ -473,14 +473,16 @@ def _holding(account_id: str) -> str:
 
 def view_start(db, account_id: str, actor: str) -> dict:
     _view_account(db, account_id)
+    t0 = time.time()
     _claim(account_id, VIEW_HOLD, wait=30)
+    t1 = time.time()
     out = _run_job(account_id, "open", {}, 120)
     if not out.get("ok"):
         _release(account_id)
         raise Refused(out.get("error") or "the browser did not open")
     with _browser_lock:
         _browser["target"] = out["result"]
-    store.log(db, actor, "view.start", {"account": account_id})
+    store.log(db, actor, "view.start", {"account": account_id, "waited_s": round(t1 - t0, 1), "opened_s": round(time.time() - t1, 1)})
     return {"ok": True}
 
 
