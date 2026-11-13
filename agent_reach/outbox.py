@@ -666,12 +666,15 @@ def instagram(d: dict, send: bool) -> str:
 
 LI_START = r"""[...document.querySelectorAll('main button, main [role=button], [role=main] button, [role=main] [role=button], main a, main div[tabindex], button, [role=button]')].find(b => /^(start a post|začít příspěvek|začněte příspěvek|vytvořit příspěvek|create a post|create|vytvořit)$/i.test((b.innerText || b.getAttribute('aria-label') || '').trim()))"""
 LI_MENU_POST = r"""[...document.querySelectorAll('[role=menu] [role=menuitem], [role=menu] button, .artdeco-dropdown__content button, .artdeco-dropdown__content [role=button]')].find(b => /^(start a post|začít příspěvek|příspěvek|post)$/i.test((b.innerText || '').trim()))"""
-LI_BOX = r"""[...document.querySelectorAll('[role=dialog] [role=textbox][contenteditable=true]')].pop()"""
-LI_DIALOG = f"(({LI_BOX}) || {{closest: () => null}}).closest('[role=dialog]')"
+#: the editor: in a dialog (older layout) or LinkedIn's composer at /sharing/compose (a tiptap/ProseMirror box, no
+#: dialog role); comment boxes under feed posts sit in forms and are never it
+LI_BOX = r"""[...document.querySelectorAll('[role=dialog] [role=textbox][contenteditable=true], [contenteditable=true].ProseMirror, [contenteditable=true][role=textbox]')].filter(x => !x.closest('form, .comments-comment-box')).pop()"""
+#: the composer around the editor: the nearest block that also holds the Post button (it shows the author too)
+LI_DIALOG = f"""(() => {{ let e = ({LI_BOX}); while (e && !(e.querySelectorAll && [...e.querySelectorAll('button')].some(b => /^(post|zveřejnit|publikovat)$/i.test((b.innerText || '').trim())))) e = e.parentElement; return e; }})()"""
 LI_MEDIA = f"""[...((({LI_DIALOG}) || document.createElement('div')).querySelectorAll('button[aria-label]'))].find(b => /media|photo|médi|fotk/i.test(b.getAttribute('aria-label')))"""
 LI_FILE = r"""[...document.querySelectorAll('input[type=file]')].filter(f => /image/.test(f.accept || 'image')).pop()"""
-LI_NEXT = r"""[...document.querySelectorAll('[role=dialog] button')].find(b => /^(next|další|done|hotovo)$/i.test((b.innerText || '').trim()) && !b.disabled)"""
-LI_POST = r"""[...document.querySelectorAll('[role=dialog] button')].find(b => /^(post|zveřejnit|publikovat)$/i.test((b.innerText || '').trim()))"""
+LI_NEXT = r"""[...document.querySelectorAll('[role=dialog] button, button')].find(b => /^(next|další|done|hotovo)$/i.test((b.innerText || '').trim()) && !b.disabled)"""
+LI_POST = f"""[...((({LI_DIALOG}) || document.createElement('div')).querySelectorAll('button'))].find(b => /^(post|zveřejnit|publikovat)$/i.test((b.innerText || '').trim()))"""
 
 
 def linkedin_post(d: dict, send: bool) -> str:
@@ -713,10 +716,12 @@ def linkedin_post(d: dict, send: bool) -> str:
             raise SystemExit("the editor does not contain the approved text; nothing was posted")
         if not tab.wait(f"(() => {{ const b = {LI_POST}; return !!b && !b.disabled; }})()", 60):
             raise SystemExit("the Post button is missing or disabled; nothing was posted")
-        if not send:
+        if not send:  # empty the editor first, so LinkedIn has no draft to keep
+            tab.js(f"(() => {{ const x = {LI_BOX}; x.focus(); document.execCommand('selectAll'); document.execCommand('delete'); return true; }})()")
+            time.sleep(1)
             tab.key("Escape")
             time.sleep(1)
-            tab.click(r"""[...document.querySelectorAll('[role=alertdialog] button, [role=dialog] button')].find(b => /^(discard|zahodit|zrušit)$/i.test((b.innerText || '').trim()))""")
+            tab.click(r"""[...document.querySelectorAll('[role=alertdialog] button, [role=dialog] button, button')].find(b => /^(discard|zahodit|zrušit)$/i.test((b.innerText || '').trim()))""")
             return f"check ok: editor opened as {d['expected_name']}, text{' and photos' if images else ''} in, Post ready; discarded, nothing posted"
         tab.click(LI_POST)
         if not tab.wait(f"!({LI_BOX})", 60):
