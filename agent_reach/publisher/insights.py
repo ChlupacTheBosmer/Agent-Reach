@@ -10,6 +10,7 @@ import io
 import json
 import random
 import statistics
+import threading
 import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -32,6 +33,51 @@ def _in_window(now: float, network: str) -> bool:
 
 
 # ── collection ──
+
+# "Fetch now": a person asks for fresh comments; the accounts are read one after another in the background (browser
+# accounts take turns with one browser, 20-120 s each); the app asks fetch_status() for progress.
+_fetch = {"running": False, "queue": [], "current": None, "done": [], "started": 0.0, "actor": ""}
+_fetch_lock = threading.Lock()
+
+
+def fetch_now(accounts: list, actor: str) -> dict:
+    ids = [str(a) for a in accounts if a][:20]
+    with _fetch_lock:
+        if _fetch["running"]:
+            _fetch["queue"] += [a for a in ids if a not in _fetch["queue"] and a != _fetch["current"]]
+            return fetch_status()
+        _fetch.update(running=True, queue=ids, current=None, done=[], started=time.time(), actor=actor)
+
+    def work():
+        db = store.connect()
+        try:
+            while True:
+                with _fetch_lock:
+                    if not _fetch["queue"]:
+                        _fetch.update(running=False, current=None)
+                        return
+                    acc = _fetch["current"] = _fetch["queue"].pop(0)
+                try:
+                    out = collect_account(db, acc, actor, manual=True)
+                except core.Refused as exc:
+                    out = {"ok": False, "error": str(exc)}
+                except Exception as exc:  # noqa: BLE001
+                    out = {"ok": False, "error": friendly(str(exc))}
+                with _fetch_lock:
+                    _fetch["done"].append({"account": acc, **out})
+        finally:
+            with _fetch_lock:
+                _fetch.update(running=False, current=None)
+            db.close()
+
+    threading.Thread(target=work, daemon=True).start()
+    return fetch_status()
+
+
+def fetch_status() -> dict:
+    with _fetch_lock:
+        return {k: (list(v) if isinstance(v, list) else v) for k, v in _fetch.items() if k != "actor"}
+
 
 def collect_account(db, account_id: str, actor: str = "publisher", manual: bool = False) -> dict:
     acc = core.account(db, account_id)

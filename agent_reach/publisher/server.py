@@ -53,6 +53,8 @@ ROUTES = [
     ("POST", r"/v1/accounts/([\w-]+)/view/stop", lambda db, b, a, m: core.view_stop(db, m[1], a)),
     ("POST", r"/v1/accounts/([\w-]+)/collect", lambda db, b, a, m: insights.collect_account(db, m[1], a, manual=True)),
     ("GET", r"/v1/collect", lambda db, b, a, m: insights.collect_status(db)),
+    ("POST", r"/v1/collect/now", lambda db, b, a, m: insights.fetch_now(b.get("accounts") or [], a)),
+    ("GET", r"/v1/collect/now", lambda db, b, a, m: insights.fetch_status()),
     ("POST", r"/v1/inbox/query", lambda db, b, a, m: insights.inbox_query(db, b)),
     ("POST", r"/v1/inbox/status", lambda db, b, a, m: insights.inbox_update(db, b.get("id", ""), b, a)),
     ("POST", r"/v1/metrics", lambda db, b, a, m: insights.metrics(db, b)),

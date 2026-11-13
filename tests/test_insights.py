@@ -149,3 +149,18 @@ def test_stale_profile_lock_from_another_pod_is_dropped(tmp_path):
     os.symlink(f"{socket.gethostname()}-1", tmp_path / "SingletonLock")
     _drop_stale_profile_lock(tmp_path)
     assert os.path.lexists(tmp_path / "SingletonLock")  # this pod's own lock stays
+
+
+def test_fetch_now_reads_accounts_one_after_another(monkeypatch):
+    import time as _t
+    from agent_reach.publisher import insights, store
+    seen = []
+    monkeypatch.setattr(store, "connect", lambda: type("DB", (), {"close": lambda self: None})())
+    monkeypatch.setattr(insights, "collect_account", lambda db, acc, actor, manual=False: seen.append((acc, manual)) or {"ok": True, "result": "1 new"})
+    insights.fetch_now(["a", "b"], "Petr")
+    for _ in range(50):
+        if not insights.fetch_status()["running"]:
+            break
+        _t.sleep(0.02)
+    st = insights.fetch_status()
+    assert seen == [("a", True), ("b", True)] and [d["account"] for d in st["done"]] == ["a", "b"] and not st["running"]
