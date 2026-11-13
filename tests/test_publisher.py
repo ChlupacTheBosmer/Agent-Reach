@@ -238,7 +238,17 @@ def test_a_crash_or_timeout_during_publish_is_unknown_not_failed(db, monkeypatch
 def test_browser_accounts_take_turns_and_the_view_stays_on_its_site(db, monkeypatch):
     monkeypatch.setattr(core, "_run_job", lambda acc, cmd, payload, timeout: {"ok": True, "result": "T1"} if cmd == "open" else {"ok": True})
     sent = []
-    monkeypatch.setattr(core, "_cdp", lambda method, params, target: sent.append((method, target)) or {})
+
+    class Live:  # the kept connection of the view: commands go to the page it was opened for
+        def __init__(self, target): self.target = target
+        def send(self, method, params=None): sent.append((method, self.target))
+    monkeypatch.setattr(core, "_live", lambda target: Live(target))
+    monkeypatch.setattr(core, "_stop_stream", lambda: None)
+
+    class Now:  # Done finishes in a background thread; run it at once here
+        def __init__(self, target, daemon=None): self.target = target
+        def start(self): self.target()
+    monkeypatch.setattr(core.threading, "Thread", Now)
     a = core.create_account(db, {"network": "twitter", "label": "A", "owner": "V4AIR", "handle": "a", "proxy": "http://u:p@h:1"}, "petr")
     b = core.create_account(db, {"network": "twitter", "label": "B", "owner": "V4AIR", "handle": "b", "proxy": "http://u:p@h:2"}, "petr")
     core._release(a["id"]), core._release(b["id"])

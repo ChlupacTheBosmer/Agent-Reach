@@ -74,14 +74,8 @@ def _send(sock: socket.socket, text: str) -> None:
     sock.sendall(head + mask + bytes(b ^ mask[i % 4] for i, b in enumerate(payload)))
 
 
-class CdpError(Exception):
-    """The browser answered a command with an error."""
-
-
-def session(fn, *, page: bool = False, target_id: Optional[str] = None):
-    """Run fn(send) over ONE connection to the target, so objects found by one command stay valid for the next
-    (a remote object id belongs to the connection that made it). send(method, params) returns the result or
-    raises CdpError. Returns fn's value, or None if the browser is unreachable."""
+def _open(*, page: bool = False, target_id: Optional[str] = None):
+    """A websocket to the browser (or to one page): (socket, bytes already read), or None if unreachable."""
     target = (next((t for t in (_json("/json/list") or []) if
                     (t.get("id") == target_id if target_id else t.get("type") == "page")), {})
               if page or target_id else (_json("/json/version") or {}))
@@ -92,9 +86,6 @@ def session(fn, *, page: bool = False, target_id: Optional[str] = None):
     host, port = u.hostname or "127.0.0.1", u.port or 80
     try:
         sock = socket.create_connection((host, port), timeout=_TIMEOUT)
-    except OSError:
-        return None
-    with sock:
         sock.settimeout(_TIMEOUT)
         key = base64.b64encode(os.urandom(16)).decode()
         sock.sendall(
@@ -105,12 +96,76 @@ def session(fn, *, page: bool = False, target_id: Optional[str] = None):
         while b"\r\n\r\n" not in resp:
             chunk = sock.recv(4096)
             if not chunk:
+                sock.close()
                 return None
             resp += chunk
-        head, _, rest = resp.partition(b"\r\n\r\n")
-        accept = base64.b64encode(hashlib.sha1((key + _GUID).encode()).digest()).decode()
-        if head.split(b"\r\n", 1)[0].split()[1:2] != [b"101"] or accept not in head.decode("latin-1"):
-            return None
+    except OSError:
+        return None
+    head, _, rest = resp.partition(b"\r\n\r\n")
+    accept = base64.b64encode(hashlib.sha1((key + _GUID).encode()).digest()).decode()
+    if head.split(b"\r\n", 1)[0].split()[1:2] != [b"101"] or accept not in head.decode("latin-1"):
+        sock.close()
+        return None
+    return sock, rest
+
+
+class Live:
+    """A kept connection to one page: send() fires commands (answers are not awaited), on_event gets every event
+    (for example screencast frames) on a reader thread. closed is True once the page or browser went away."""
+
+    def __init__(self, target_id: str, on_event) -> None:
+        import threading
+        opened = _open(target_id=target_id)
+        if not opened:
+            raise CdpError("the page is not reachable")
+        self.sock, self._buf = opened
+        self.sock.settimeout(None)
+        self.on_event, self.closed, self._id = on_event, False, 0
+        self._lock = threading.Lock()
+        threading.Thread(target=self._read, daemon=True).start()
+
+    def send(self, method: str, params: Optional[dict] = None) -> None:
+        with self._lock:
+            self._id += 1
+            try:
+                _send(self.sock, json.dumps({"id": self._id, "method": method, "params": params or {}}))
+            except OSError:
+                self.closed = True
+
+    def _read(self) -> None:
+        try:
+            while True:
+                payload, self._buf = _read_frame(self.sock, self._buf)
+                if payload is None:
+                    break
+                msg = json.loads(payload.decode("utf-8"))
+                if "method" in msg:
+                    self.on_event(msg["method"], msg.get("params") or {})
+        except Exception:  # noqa: BLE001
+            pass
+        self.closed = True
+
+    def close(self) -> None:
+        self.closed = True
+        try:
+            self.sock.close()
+        except OSError:
+            pass
+
+
+class CdpError(Exception):
+    """The browser answered a command with an error."""
+
+
+def session(fn, *, page: bool = False, target_id: Optional[str] = None):
+    """Run fn(send) over ONE connection to the target, so objects found by one command stay valid for the next
+    (a remote object id belongs to the connection that made it). send(method, params) returns the result or
+    raises CdpError. Returns fn's value, or None if the browser is unreachable."""
+    opened = _open(page=page, target_id=target_id)
+    if not opened:
+        return None
+    sock, rest = opened
+    with sock:
         state = {"buf": rest, "id": 0}
 
         def send(method: str, params: Optional[dict] = None):

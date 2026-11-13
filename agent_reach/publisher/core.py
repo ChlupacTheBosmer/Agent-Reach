@@ -502,36 +502,85 @@ def _follow_popup(account_id: str, target: str) -> str:
     return new
 
 
-def view_frame(db, account_id: str) -> dict:
+# The view streams: Chromium pushes a JPEG over one kept connection whenever the page changes (Page.startScreencast),
+# the app long-polls for a frame newer than the one it has. Inputs go over the same connection.
+_stream = {"target": None, "live": None, "frame": None, "seq": 0, "meta": {}, "url": ""}
+_stream_cond = threading.Condition()
+STREAM = {"format": "jpeg", "quality": 60, "maxWidth": 1280, "maxHeight": 900, "everyNthFrame": 1}
+
+
+def _on_event(live, method: str, params: dict) -> None:
+    if method == "Page.screencastFrame":
+        live.send("Page.screencastFrameAck", {"sessionId": params.get("sessionId")})
+        with _stream_cond:
+            if _stream["live"] is live:
+                _stream.update(frame=params.get("data"), meta=params.get("metadata") or {}, seq=_stream["seq"] + 1)
+                _stream_cond.notify_all()
+    elif method == "Page.frameNavigated" and not (params.get("frame") or {}).get("parentId"):
+        with _stream_cond:
+            if _stream["live"] is live:
+                _stream["url"] = (params.get("frame") or {}).get("url", "")
+
+
+def _live(target: str):
+    """The stream for `target`, started (or restarted, after a popup or a dropped connection) when needed."""
+    from agent_reach.runtime import cdp
+    with _stream_cond:
+        live = _stream["live"]
+        if live and not live.closed and _stream["target"] == target:
+            return live
+        if live:
+            live.close()
+        box = {}
+        live = cdp.Live(target, lambda m, p: _on_event(box["live"], m, p))
+        box["live"] = live
+        _stream.update(target=target, live=live, frame=None, meta={})
+    live.send("Page.enable")
+    live.send("Page.startScreencast", STREAM)
+    return live
+
+
+def _stop_stream() -> None:
+    with _stream_cond:
+        if _stream["live"]:
+            _stream["live"].close()
+        _stream.update(target=None, live=None, frame=None, meta={}, url="")
+        _stream_cond.notify_all()
+
+
+def view_frame(db, account_id: str, body: dict | None = None) -> dict:
+    """The newest picture; with {"since": n} wait up to 2.5 s for one newer than n ({"same": true} if none came)."""
     target = _follow_popup(account_id, _holding(account_id))
-    shot = _cdp("Page.captureScreenshot", {"format": "jpeg", "quality": 55}, target) or {}
-    info = _cdp("Runtime.evaluate", {"expression": "JSON.stringify([innerWidth, innerHeight, location.href])",
-                                     "returnByValue": True}, target) or {}
-    try:
-        w, h, url = json.loads((info.get("result") or {}).get("value") or "[0,0,\"\"]")
-    except ValueError:
-        w, h, url = 0, 0, ""
-    if not shot.get("data"):
-        raise Refused("no picture from the browser (still loading?)")
-    return {"image": shot["data"], "width": w, "height": h, "url": url}
+    _live(target)
+    since = int((body or {}).get("since") or 0)
+    with _stream_cond:
+        _stream_cond.wait_for(lambda: _stream["frame"] and _stream["seq"] > since, timeout=2.5 if since else 8)
+        frame, seq, meta, url = _stream["frame"], _stream["seq"], _stream["meta"], _stream["url"]
+    if not frame:
+        raise Refused("no picture from the browser yet (still loading?)")
+    if since and seq <= since:
+        return {"same": True, "seq": seq}
+    # the picture is scaled to at most 1280 px; clicks come back in page pixels (CSS width/height of the page)
+    return {"image": frame, "seq": seq, "width": meta.get("deviceWidth", 0), "height": meta.get("deviceHeight", 0), "url": url}
 
 
 def view_input(db, account_id: str, body: dict) -> dict:
     """Clicks, typed text and a few keys from the person looking at the view. Typed text is never logged."""
     target, kind = _holding(account_id), body.get("type")
+    live = _live(target)  # the kept connection: no new connection per keystroke
     if kind == "click":
         x, y = float(body["x"]), float(body["y"])
         for t in ("mouseMoved", "mousePressed", "mouseReleased"):
-            _cdp("Input.dispatchMouseEvent", {"type": t, "x": x, "y": y, "button": "left", "clickCount": 0 if t == "mouseMoved" else 1}, target)
+            live.send("Input.dispatchMouseEvent", {"type": t, "x": x, "y": y, "button": "left", "clickCount": 0 if t == "mouseMoved" else 1})
     elif kind == "text":
-        _cdp("Input.insertText", {"text": str(body.get("text", ""))[:500]}, target)
+        live.send("Input.insertText", {"text": str(body.get("text", ""))[:500]})
     elif kind == "key" and body.get("key") in KEYS:
         k = body["key"]
         for t in ("keyDown", "keyUp"):
-            _cdp("Input.dispatchKeyEvent", {"type": t, "key": k, "code": k, "windowsVirtualKeyCode": KEYS[k]}, target)
+            live.send("Input.dispatchKeyEvent", {"type": t, "key": k, "code": k, "windowsVirtualKeyCode": KEYS[k]})
     elif kind == "scroll":
-        _cdp("Input.dispatchMouseEvent", {"type": "mouseWheel", "x": float(body.get("x", 200)), "y": float(body.get("y", 300)),
-                                          "deltaX": 0, "deltaY": max(-2000.0, min(2000.0, float(body.get("dy", 400))))}, target)
+        live.send("Input.dispatchMouseEvent", {"type": "mouseWheel", "x": float(body.get("x", 200)), "y": float(body.get("y", 300)),
+                                               "deltaX": 0, "deltaY": max(-2000.0, min(2000.0, float(body.get("dy", 400))))})
     elif kind == "goto":
         acc = account(db, account_id)
         host = (urlsplit(str(body.get("url", ""))).hostname or "").lower()
@@ -544,12 +593,27 @@ def view_input(db, account_id: str, body: dict) -> dict:
 
 
 def view_stop(db, account_id: str, actor: str) -> dict:
+    """Done: the login is saved and the browser closed in the background, then checked; the person does not wait."""
     _view_account(db, account_id)
     with _browser_lock:
         mine = _browser["account"] == account_id
-    if mine:
-        _run_job(account_id, "close", {}, 120)
-        _release(account_id)
-    db.execute("UPDATE accounts SET status='unchecked' WHERE id=?", (account_id,))
+    db.execute("UPDATE accounts SET status='checking' WHERE id=?", (account_id,))
     store.log(db, actor, "view.stop", {"account": account_id})
-    return check_account(db, account_id, actor)
+
+    def finish():
+        bg = store.connect()
+        try:
+            if mine:
+                _stop_stream()
+                _run_job(account_id, "close", {}, 120)  # saves the session
+                _release(account_id)
+            check_account(bg, account_id, actor)
+        except Exception as exc:  # noqa: BLE001
+            bg.execute("UPDATE accounts SET status='needs-login' WHERE id=? AND status='checking'", (account_id,))
+            store.log(bg, actor, "view.stop.error", {"account": account_id, "error": str(exc)[:300]})
+        finally:
+            with contextlib.suppress(Exception):
+                bg.close()
+
+    threading.Thread(target=finish, daemon=True).start()
+    return {"ok": True, "result": "saving the login; the check runs in the background"}

@@ -46,6 +46,7 @@ ROUTES = [
     ("POST", r"/v1/accounts/([\w-]+)/groups", lambda db, b, a, m: core.groups(db, m[1], a)),
     ("POST", r"/v1/accounts/([\w-]+)/view/start", lambda db, b, a, m: core.view_start(db, m[1], a)),
     ("GET", r"/v1/accounts/([\w-]+)/view/frame", lambda db, b, a, m: core.view_frame(db, m[1])),
+    ("POST", r"/v1/accounts/([\w-]+)/view/frame", lambda db, b, a, m: core.view_frame(db, m[1], b)),
     ("POST", r"/v1/accounts/([\w-]+)/view/input", lambda db, b, a, m: core.view_input(db, m[1], b)),
     ("POST", r"/v1/accounts/([\w-]+)/view/stop", lambda db, b, a, m: core.view_stop(db, m[1], a)),
     ("POST", r"/v1/accounts/([\w-]+)/collect", lambda db, b, a, m: insights.collect_account(db, m[1], a, manual=True)),
