@@ -495,6 +495,8 @@ def _launch(url: str, *, headless: bool = True) -> None:
             env={**os.environ, "PYTHONPATH": str(Path(__file__).parents[2]),
                  "CLOAKBROWSER_AUTO_UPDATE": "false",
                  "REACH_BROWSER_PROXY": str(Config(read_only=True).get("proxy") or ""),
+                 "REACH_BROWSER_LOCALE": str(Config(read_only=True).get("browser_locale") or ""),
+                 "REACH_BROWSER_TIMEZONE": str(Config(read_only=True).get("browser_timezone") or ""),
                  "REACH_BROWSER_PORT": str(CDP_PORT),
                  "CLOAKBROWSER_CACHE_DIR": str(browser_root().parent / "cloak-binaries")}, **_detach_kwargs(),
         )

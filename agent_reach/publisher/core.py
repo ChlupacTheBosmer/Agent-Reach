@@ -54,20 +54,53 @@ def home(account_id: str):
     return store.data_dir() / "accounts" / account_id
 
 
-def _pool_proxy(db) -> str:
+LOCALES = {"CZ": "cs-CZ", "SK": "sk-SK", "PL": "pl-PL", "HU": "hu-HU", "AT": "de-AT", "DE": "de-DE"}
+
+
+def _probe(proxy: str) -> dict:
+    """Ask a what-is-my-IP service through the proxy: it must answer, and it tells the exit country and timezone."""
+    import urllib.request
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
+    with opener.open(urllib.request.Request("https://ipinfo.io/json", headers={"User-Agent": "curl/8"}), timeout=25) as r:
+        info = json.loads(r.read())
+    return {"country": info.get("country", ""), "timezone": info.get("timezone", "")}
+
+
+def _proxy_setup(proxy: str) -> dict:
+    """Probe a proxy; refuse it if it does not work or exits outside PUBLISHER_PROXY_COUNTRIES (e.g. CZ,SK,PL,HU)."""
+    try:
+        info = _probe(proxy)
+    except Exception as exc:  # noqa: BLE001 - any failure means: not usable
+        raise Refused(f"the proxy {masked(proxy)} does not work ({type(exc).__name__}: {str(exc)[:80]})") from None
+    allowed = [c.strip().upper() for c in os.environ.get("PUBLISHER_PROXY_COUNTRIES", "").split(",") if c.strip()]
+    if allowed and info["country"] not in allowed:
+        raise Refused(f"the proxy {masked(proxy)} exits in {info['country'] or 'an unknown country'}, "
+                      f"not in {', '.join(allowed)}")
+    return {"proxy": proxy, "browser_locale": LOCALES.get(info["country"], "en-US"), "browser_timezone": info["timezone"],
+            "country": info["country"]}
+
+
+def _pool_proxy(db) -> dict:
     """The first address in the team's proxy list (PUBLISHER_PROXIES, lines ip:port:user:password) that no account
-    uses yet. One address per account, kept for good, so each account always appears from the same household."""
+    uses yet and that works. One address per account, kept for good, so each account always appears from the same
+    household; broken or foreign addresses are skipped."""
     path = os.environ.get("PUBLISHER_PROXIES", "")
     if not path or not os.path.isfile(path):
         raise Refused("enter a proxy for this account (the publisher has no proxy list)")
     used = {masked(r[0]) for r in db.execute("SELECT proxy FROM accounts WHERE proxy != ''")}
+    skipped = []
     for line in open(path, encoding="utf-8"):
         parts = line.strip().split(":")
-        if len(parts) == 4:
-            proxy = f"http://{parts[2]}:{parts[3]}@{parts[0]}:{parts[1]}"
-            if masked(proxy) not in used:
-                return proxy
-    raise Refused("every address in the proxy list is taken; buy more or free one")
+        if len(parts) != 4:
+            continue
+        proxy = f"http://{parts[2]}:{parts[3]}@{parts[0]}:{parts[1]}"
+        if masked(proxy) in used:
+            continue
+        try:
+            return _proxy_setup(proxy)
+        except Refused as exc:
+            skipped.append(str(exc))
+    raise Refused("no free working address in the proxy list" + (f" ({'; '.join(skipped)[:400]})" if skipped else ""))
 
 
 def _check_proxy(proxy: str) -> None:
@@ -94,18 +127,23 @@ def create_account(db, body: dict, actor: str) -> dict:
         raise Refused("label and owner are required")
     route = NETWORKS[network]["route"]
     proxy = (body.get("proxy") or "").strip()
+    setup = {}
     if route == "browser":
-        proxy = proxy or _pool_proxy(db)
-        _check_proxy(proxy)  # browser accounts never go out from the server's own address
+        if proxy:
+            _check_proxy(proxy)
+            setup = _proxy_setup(proxy)
+        else:
+            setup = _pool_proxy(db)
+        proxy = setup["proxy"]  # browser accounts never go out from the server's own address
     acc = {"id": f"{network}-{slug(label)}", "network": network, "label": label, "owner": owner, "route": route,
            "handle": (body.get("handle") or "").strip().lstrip("@"), "proxy": proxy,
            "status": "needs-login" if route == "browser" else "needs-credentials", "created": time.time()}
     if db.execute("SELECT 1 FROM accounts WHERE id=?", (acc["id"],)).fetchone():
         raise Refused(f"account {acc['id']} exists")
     db.execute("INSERT INTO accounts VALUES (:id,:network,:label,:owner,:route,:handle,:proxy,:status,:created)", acc)
-    if proxy:
-        in_home(acc["id"], "configure", {"proxy": proxy})
-    store.log(db, actor, "account.create", public(acc))
+    if setup:
+        in_home(acc["id"], "configure", {k: v for k, v in setup.items() if k != "country"})
+    store.log(db, actor, "account.create", {**public(acc), "proxy_country": setup.get("country", "")})
     return public(acc)
 
 

@@ -19,6 +19,7 @@ def home_calls(monkeypatch):
 @pytest.fixture
 def db(tmp_path, monkeypatch, home_calls):
     monkeypatch.setenv("PUBLISHER_DATA", str(tmp_path / "pub"))
+    monkeypatch.setattr(core, "_probe", lambda proxy: {"country": "CZ", "timezone": "Europe/Prague"})
     conn = store.connect()
     yield conn
     conn.close()
@@ -46,7 +47,8 @@ def test_browser_accounts_need_one_fixed_proxy_and_never_expose_it(db, home_call
     acc = core.create_account(db, {"network": "twitter", "label": "V4AIR", "owner": "petr", "handle": "v4air",
                                    "proxy": "http://user:secret@1.2.3.4:8000"}, "petr")
     assert acc["id"] == "twitter-v4air" and acc["proxy"] == "http://1.2.3.4:8000" and "secret" not in json.dumps(acc)
-    assert home_calls[-1] == ("twitter-v4air", "configure", {"proxy": "http://user:secret@1.2.3.4:8000"})
+    assert home_calls[-1] == ("twitter-v4air", "configure", {"proxy": "http://user:secret@1.2.3.4:8000",
+                                                             "browser_locale": "cs-CZ", "browser_timezone": "Europe/Prague"})
 
 
 def test_preview_derives_own_target_and_hash_is_stable(db):
@@ -161,7 +163,7 @@ def test_browser_accounts_take_a_free_address_from_the_proxy_list(db, tmp_path, 
     a = core.create_account(db, {"network": "instagram", "label": "V4AIR", "owner": "V4AIR", "handle": "v4air.eu"}, "petr")
     b = core.create_account(db, {"network": "facebookpage", "label": "V4AIR AI Meetup", "owner": "V4AIR", "handle": "v4air"}, "petr")
     assert (a["proxy"], b["proxy"]) == ("http://1.1.1.1:5000", "http://2.2.2.2:5001")
-    with pytest.raises(core.Refused, match="every address"):
+    with pytest.raises(core.Refused, match="no free working address"):
         core.create_account(db, {"network": "twitter", "label": "V4AIR", "owner": "V4AIR"}, "petr")
 
 
@@ -192,3 +194,20 @@ def test_instagram_refuses_another_logged_in_account(monkeypatch):
         outbox.instagram(d, True)
     monkeypatch.setattr(FakeTab, "js", lambda self, e: "/v4air.eu/")
     assert outbox.instagram(d, False).startswith("check ok")
+
+
+def test_proxies_that_fail_or_exit_abroad_are_skipped(db, tmp_path, monkeypatch):
+    pool = tmp_path / "proxies.txt"
+    pool.write_text("1.1.1.1:5000:u1:p1\r\n2.2.2.2:5001:u2:p2\r\n3.3.3.3:5002:u3:p3\r\n")  # Webshare sends CRLF
+
+    def probe(proxy):
+        if "1.1.1.1" in proxy:
+            raise OSError("Tunnel connection failed: 402")
+        return {"country": "US" if "2.2.2.2" in proxy else "CZ", "timezone": "Europe/Prague"}
+    monkeypatch.setattr(core, "_probe", probe)
+    monkeypatch.setenv("PUBLISHER_PROXIES", str(pool))
+    monkeypatch.setenv("PUBLISHER_PROXY_COUNTRIES", "CZ,SK")
+    acc = core.create_account(db, {"network": "instagram", "label": "V4AIR", "owner": "V4AIR", "handle": "v4air.eu"}, "petr")
+    assert acc["proxy"] == "http://3.3.3.3:5002"
+    with pytest.raises(core.Refused, match="exits in US"):
+        core.create_account(db, {"network": "twitter", "label": "X", "owner": "V4AIR", "proxy": "http://u:p@2.2.2.2:5001"}, "petr")

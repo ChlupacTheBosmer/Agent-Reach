@@ -85,8 +85,11 @@ def _launch_cloak(url: str, *, headless: bool = True):
             proxy_options.update(username=unquote(parsed.username), password=unquote(parsed.password or ""))
 
 
+    # A proxied account looks like a person at that address: language and clock of its country (set per account
+    # by the publisher); without them the system's own are used.
     ctx = launch_persistent_context(
-        str(browser.profile_dir()), headless=headless, locale="zh-CN",
+        str(browser.profile_dir()), headless=headless,
+        locale=os.environ.get("REACH_BROWSER_LOCALE") or None, timezone=os.environ.get("REACH_BROWSER_TIMEZONE") or None,
         args=["--remote-debugging-address=127.0.0.1", f"--remote-debugging-port={browser.CDP_PORT}"],
         extension_paths=[str(browser.extension_dir())],
         proxy=proxy_options,

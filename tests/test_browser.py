@@ -182,6 +182,7 @@ def test_cloak_launcher_shares_profile_and_keeps_bridge_off_proxy(home, monkeypa
     kwargs = launch.call_args.kwargs
     assert launch.call_args.args == (str(browser.profile_dir()),)
     assert kwargs["headless"] is True
+    assert kwargs["locale"] is None and kwargs["timezone"] is None  # the system's own unless the account sets them
     assert kwargs["extension_paths"] == [str(browser.extension_dir())]
     assert kwargs["proxy"] == {"server": "http://127.0.0.1:7890", "username": "user", "password": "pass",
                                 "bypass": "localhost,127.0.0.1,[::1]"}
