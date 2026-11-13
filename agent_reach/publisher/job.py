@@ -1,6 +1,6 @@
 """One publisher step, run as its own process with HOME = the account's home (see core.in_home).
 
-    python -m agent_reach.publisher.job configure|check|publish|oauth   (JSON on stdin, one JSON line on stdout)
+    python -m agent_reach.publisher.job configure|check|publish   (JSON on stdin, one JSON line on stdout)
 """
 from __future__ import annotations
 
@@ -12,9 +12,7 @@ import urllib.request
 from pathlib import Path
 
 CONFIG_KEYS = ("proxy", "bluesky_handle", "bluesky_app_password")
-META_KINDS = {"fbpage-post": "page_post", "instagram-post": "instagram", "instagram-carousel": "instagram",
-              "instagram-reel": "instagram", "instagram-story": "instagram"}
-MAX_MEDIA = 20 * 1024 * 1024
+MAX_MEDIA = 25 * 1024 * 1024  # the app's media store keeps at most 25 MB per file
 
 
 def configure(payload: dict) -> dict:
@@ -29,9 +27,6 @@ def configure(payload: dict) -> dict:
 
 def check(_payload: dict) -> dict:
     network = os.environ.get("PUBLISHER_ACCOUNT", "").split("-")[0]
-    if network in ("facebookpage", "instagram"):
-        from . import meta
-        return meta.check(network)
     if network == "bluesky":
         from agent_reach import outbox
         from agent_reach.config import Config
@@ -52,7 +47,7 @@ def _download(media: list, folder: Path) -> list:
             data = r.read(MAX_MEDIA + 1)
             mime = r.headers.get_content_type()
         if len(data) > MAX_MEDIA:
-            raise SystemExit(f"media {i + 1} is over 20 MB")
+            raise SystemExit(f"media {i + 1} is over 25 MB")
         ext = {"image/png": ".png", "image/webp": ".webp", "image/gif": ".gif", "video/mp4": ".mp4"}.get(mime, ".jpg")
         path = folder / f"media-{i + 1}{ext}"
         path.write_bytes(data)
@@ -60,20 +55,10 @@ def _download(media: list, folder: Path) -> list:
     return out
 
 
-def oauth(payload: dict) -> dict:
-    from . import meta
-    return meta.connect(payload["network"], payload.get("wanted", ""), payload["code"], payload["redirect_uri"])
-
-
 def publish(payload: dict) -> dict:
     from agent_reach import outbox
     from agent_reach.runtime import pacing
     post = payload["post"]
-    if post["kind"] in META_KINDS:
-        from . import meta
-        pacing.LIMITS.setdefault("meta:write", (30, 30, 25))
-        pacing.before("meta:write")  # Meta fetches the media itself from the app's public URLs
-        return {"ok": True, "result": getattr(meta, META_KINDS[post["kind"]])(post)}
     d = {**post, "status": "approved", "created": "", "result": ""}
     outbox.validate(d)
     if post["kind"].startswith("bluesky"):
@@ -93,7 +78,7 @@ def publish(payload: dict) -> dict:
 def main() -> int:
     command = sys.argv[1] if len(sys.argv) > 1 else ""
     payload = json.loads(sys.stdin.read() or "{}")
-    step = {"configure": configure, "check": check, "publish": publish, "oauth": oauth}.get(command)
+    step = {"configure": configure, "check": check, "publish": publish}.get(command)
     try:
         out = step(payload) if step else {"ok": False, "error": f"unknown command {command!r}"}
     except SystemExit as exc:

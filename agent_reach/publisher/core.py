@@ -24,26 +24,18 @@ NETWORKS = {
     "facebook": {"route": "browser", "kinds": {
         "facebook-group-post": {"text": 5000, "images": 0, "target": "group"},
         "facebook-message": {"text": 2000, "images": 0, "target": "person"}}},
-    "facebookpage": {"route": "api", "kinds": {
-        "fbpage-post": {"text": 5000, "images": 10, "target": "own", "options": ["link", "first_comment"]}}},
-    "instagram": {"route": "api", "kinds": {
-        "instagram-post": {"text": 2200, "images": 1, "min_media": 1, "target": "own", "media": "image",
-                           "options": ["tag_people", "collaborators", "first_comment"]},
-        "instagram-carousel": {"text": 2200, "images": 10, "min_media": 2, "target": "own", "media": "image or video",
-                               "options": ["tag_people", "collaborators", "first_comment"]},
-        "instagram-reel": {"text": 2200, "images": 1, "min_media": 1, "target": "own", "media": "video",
-                           "options": ["collaborators", "first_comment"]},
-        "instagram-story": {"text": 0, "images": 1, "min_media": 1, "target": "own", "media": "image or video",
-                            "options": ["tag_people"]}}},
+    "facebookpage": {"route": "browser", "kinds": {
+        "facebook-page-post": {"text": 5000, "images": 10, "target": "own", "media": "image"}}},
+    "instagram": {"route": "browser", "kinds": {
+        "instagram-post": {"text": 2200, "images": 10, "min_media": 1, "target": "own", "media": "image or video"},
+        "instagram-reel": {"text": 2200, "images": 1, "min_media": 1, "target": "own", "media": "video"},
+        "instagram-story": {"text": 0, "images": 1, "min_media": 1, "target": "own", "media": "image or video"}}},
     "linkedin": {"route": "browser", "kinds": {
         "linkedin-message": {"text": 2000, "images": 0, "target": "thread"},
         "linkedin-connect": {"text": 300, "images": 0, "target": "person"}}},
 }
 OWN_URL = {"bluesky": "https://bsky.app/profile/{h}", "twitter": "https://x.com/{h}",
-           "facebookpage": "the Facebook Page {h}", "instagram": "https://www.instagram.com/{h}/"}
-#: Kinds the publisher drives itself; all others go through Agent Reach's outbox senders.
-NATIVE = {"fbpage-post", "instagram-post", "instagram-carousel", "instagram-reel", "instagram-story"}
-OAUTH = {"facebookpage": "meta", "instagram": "meta"}
+           "facebookpage": "https://www.facebook.com/{h}", "instagram": "https://www.instagram.com/{h}/"}
 #: Account-home settings each network accepts (written to that home's Agent Reach config, never returned).
 CREDENTIALS = {"bluesky": ("bluesky_handle", "bluesky_app_password")}
 
@@ -60,6 +52,22 @@ def slug(s: str) -> str:
 
 def home(account_id: str):
     return store.data_dir() / "accounts" / account_id
+
+
+def _pool_proxy(db) -> str:
+    """The first address in the team's proxy list (PUBLISHER_PROXIES, lines ip:port:user:password) that no account
+    uses yet. One address per account, kept for good, so each account always appears from the same household."""
+    path = os.environ.get("PUBLISHER_PROXIES", "")
+    if not path or not os.path.isfile(path):
+        raise Refused("enter a proxy for this account (the publisher has no proxy list)")
+    used = {masked(r[0]) for r in db.execute("SELECT proxy FROM accounts WHERE proxy != ''")}
+    for line in open(path, encoding="utf-8"):
+        parts = line.strip().split(":")
+        if len(parts) == 4:
+            proxy = f"http://{parts[2]}:{parts[3]}@{parts[0]}:{parts[1]}"
+            if masked(proxy) not in used:
+                return proxy
+    raise Refused("every address in the proxy list is taken; buy more or free one")
 
 
 def _check_proxy(proxy: str) -> None:
@@ -87,6 +95,7 @@ def create_account(db, body: dict, actor: str) -> dict:
     route = NETWORKS[network]["route"]
     proxy = (body.get("proxy") or "").strip()
     if route == "browser":
+        proxy = proxy or _pool_proxy(db)
         _check_proxy(proxy)  # browser accounts never go out from the server's own address
     acc = {"id": f"{network}-{slug(label)}", "network": network, "label": label, "owner": owner, "route": route,
            "handle": (body.get("handle") or "").strip().lstrip("@"), "proxy": proxy,
@@ -121,19 +130,6 @@ def set_credentials(db, account_id: str, body: dict, actor: str) -> dict:
     return public(account(db, account_id))
 
 
-def connect_oauth(db, account_id: str, body: dict, actor: str) -> dict:
-    """Finish an OAuth login (code from the app's callback): the job exchanges it and stores tokens in the home."""
-    acc = account(db, account_id)
-    if acc["network"] not in OAUTH:
-        raise Refused(f"{acc['network']} accounts do not connect with OAuth")
-    out = in_home(account_id, "oauth", {"network": acc["network"], "wanted": acc["handle"] or acc["label"],
-                                        "code": body.get("code", ""), "redirect_uri": body.get("redirect_uri", "")})
-    if out.get("ok"):
-        db.execute("UPDATE accounts SET handle=?, status='ok' WHERE id=?", (out.get("handle") or acc["handle"], account_id))
-    store.log(db, actor, "account.connect", {"account": account_id, "ok": out.get("ok"), "result": out.get("result") or out.get("error")})
-    return out
-
-
 def check_account(db, account_id: str, actor: str) -> dict:
     out = in_home(account_id, "check", {})
     status = "ok" if out.get("ok") else ("needs-login" if account(db, account_id)["route"] == "browser" else "needs-credentials")
@@ -161,35 +157,27 @@ def normalize(db, body: dict) -> dict:
         raise Refused(f"{kind} takes at most {spec['images']} media files")
     if len(media) < spec.get("min_media", 0):
         raise Refused(f"{kind} needs at least {spec['min_media']} media file(s)")
-    video = [m for m in media if m["url"].lower().split("?")[0].endswith((".mp4", ".mov"))]
+    video = [m for m in media if m["url"].lower().split("?")[0].endswith(".mp4")]
     if spec.get("media") == "video" and len(video) != len(media):
-        raise Refused(f"{kind} needs a video (MP4 or MOV)")
-    if spec.get("media") == "image" and video:
-        raise Refused(f"{kind} takes images only; use a reel for video")
+        raise Refused(f"{kind} needs an MP4 video")
+    if spec.get("media", "image") == "image" and video:
+        raise Refused(f"{kind} takes images only")
     for m in media:
         if urlsplit(m["url"]).scheme != "https":
             raise Refused("media must be https URLs")
     if spec["target"] == "own":
         if not acc["handle"]:
             raise Refused("the account has no handle yet; set its credentials or handle first")
-        target, expected = OWN_URL[acc["network"]].format(h=acc["handle"]), acc["handle"]
+        target = OWN_URL[acc["network"]].format(h=acc["handle"])
+        expected = acc["label"] if acc["network"] == "facebookpage" else acc["handle"]  # a Page shows its name
     else:
         target, expected = (body.get("target") or "").strip(), (body.get("expected_name") or "").strip()
         if not target or not expected:
             raise Refused(f"{kind} needs a target ({spec['target']}) and the exact name the page shows")
-    allowed = set(spec.get("options", []))
-    options = {k: v for k, v in (body.get("options") or {}).items() if k in allowed and v}
-    for k in ("tag_people", "collaborators"):
-        if k in options:
-            options[k] = [str(x).strip().lstrip("@") for x in (options[k] if isinstance(options[k], list) else str(options[k]).split(","))
-                          if str(x).strip()]
-    if len(options.get("collaborators", [])) > 3:
-        raise Refused("Instagram allows at most 3 collaborators")
     post = {"account": acc["id"], "kind": kind, "target": target, "expected_name": expected, "text": text,
-            "media": media, "options": options}
-    if kind not in NATIVE:
-        from agent_reach import outbox
-        outbox.validate({**post, "status": "", "created": "", "result": ""})
+            "media": media, "options": {}}
+    from agent_reach import outbox
+    outbox.validate({**post, "status": "", "created": "", "result": ""})
     return post
 
 

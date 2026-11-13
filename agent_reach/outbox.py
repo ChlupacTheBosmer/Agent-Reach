@@ -33,12 +33,14 @@ import sys
 import time
 from pathlib import Path
 
-KINDS = ("facebook-group-post", "facebook-message", "linkedin-message", "linkedin-connect",
-         "twitter-post", "twitter-reply", "bluesky-post", "bluesky-reply", "bluesky-message")
-HOSTS = {"facebook": "facebook.com", "linkedin": "linkedin.com", "twitter": "x.com", "bluesky": "bsky.app"}
+KINDS = ("facebook-group-post", "facebook-page-post", "facebook-message", "linkedin-message", "linkedin-connect",
+         "twitter-post", "twitter-reply", "bluesky-post", "bluesky-reply", "bluesky-message",
+         "instagram-post", "instagram-reel", "instagram-story")
+HOSTS = {"facebook": "facebook.com", "linkedin": "linkedin.com", "twitter": "x.com", "bluesky": "bsky.app",
+         "instagram": "instagram.com"}
 FIELDS = ("kind", "target", "expected_name", "status", "created", "result")
 #: write budget per site: minimum gap (s), random extra (s), per day; separate from reads
-WRITE_LIMITS = {f"{site}:write": (90, 60, 10) for site in ("facebook", "linkedin", "twitter", "bluesky")}
+WRITE_LIMITS = {f"{site}:write": (90, 60, 10) for site in ("facebook", "linkedin", "twitter", "bluesky", "instagram")}
 
 
 def root() -> Path:
@@ -91,7 +93,7 @@ def load(draft: str) -> tuple[Path, dict]:
 def validate(d: dict) -> None:
     if d["kind"] not in KINDS:
         raise SystemExit(f"unknown kind {d['kind']!r}; one of {', '.join(KINDS)}")
-    if not d["text"].strip():
+    if not d["text"].strip() and d["kind"] != "instagram-story":  # a story is only the picture or video
         raise SystemExit("the draft has no text")
     if not d["expected_name"]:
         raise SystemExit("expected_name is required: the name the page must show, so nothing goes to the wrong place")
@@ -150,6 +152,14 @@ class Tab:
                                                      "windowsVirtualKeyCode": 13, "nativeVirtualKeyCode": 13},
                           target_id=self.id)
 
+    def upload(self, expression: str, paths: list) -> None:
+        """Put local files into the file input that `expression` returns, as a person picking them would."""
+        res = self.cdp.call("Runtime.evaluate", {"expression": expression}, target_id=self.id) or {}
+        oid = (res.get("result") or {}).get("objectId")
+        if not oid:
+            raise SystemExit("no file field to attach the media to; nothing was posted")
+        self.cdp.call("DOM.setFileInputFiles", {"files": paths, "objectId": oid}, target_id=self.id)
+
     def close(self) -> None:
         self.cdp.call("Target.closeTarget", {"targetId": self.id})
         self.cdp._TIMEOUT = self.old
@@ -168,11 +178,23 @@ COMPOSER_BOX = r"""[...document.querySelectorAll('[role=dialog] [role=textbox][c
 POST_BUTTON = r"""[...document.querySelectorAll('[role=dialog] [role=button][aria-label]')].find(b => /^(zveřejnit|post|publikovat)$/i.test(b.getAttribute('aria-label')))"""
 
 
+#: Facebook shows this to a person who manages a Page but has not switched into it
+SWITCH_PROMPT = r"/Switch now|Switch into|Přepnout teď|Přepnout na|Přepnout do/i.test((document.querySelector('[role=main]')||document.body).innerText)"
+PHOTO_BUTTON = r"""[...document.querySelectorAll('[role=dialog] [role=button][aria-label]')].find(b => /photo|fotk/i.test(b.getAttribute('aria-label')))"""
+DIALOG_FILE = "document.querySelector('[role=dialog] input[type=file]')"
+
+
 def facebook_group_post(d: dict, send: bool) -> str:
+    """A group post, or (facebook-page-post) a post on the Page this browser is switched into."""
+    page = d["kind"] == "facebook-page-post"
     tab = Tab(d["target"], "facebook")
     try:
+        if page and tab.wait(SWITCH_PROMPT, 8):
+            raise SystemExit("this browser is logged in as a person, not as the Page: switch into the Page once in the "
+                             "login view (profile menu > the Page), then try again; nothing was posted")
         if not tab.wait(COMPOSER_BUTTON, 30):
-            raise SystemExit("no 'Write something' box on the group page (not a member, or posting is closed)")
+            raise SystemExit("no 'Write something' box on the page" if page else
+                             "no 'Write something' box on the group page (not a member, or posting is closed)")
         if _norm(d["expected_name"]).lower() not in _norm(tab.js("document.title + ' ' + (document.querySelector('[role=main]')||document.body).innerText.slice(0, 3000)") or "").lower():
             raise SystemExit(f"the page does not show the group name {d['expected_name']!r}; refusing to post")
         tab.js(f"(() => {{ const b = {COMPOSER_BUTTON}; b.click(); return true; }})()")
@@ -184,11 +206,23 @@ def facebook_group_post(d: dict, send: bool) -> str:
         typed = tab.js(f"(() => {{ const x = {COMPOSER_BOX}; return x ? x.innerText : ''; }})()") or ""
         if _norm(d["text"])[:200] not in _norm(typed):
             raise SystemExit("the editor does not contain the approved text; nothing was posted")
+        images = [m["path"] for m in d.get("media") or []]
+        if images:
+            if not tab.js(f"!!({DIALOG_FILE})"):
+                tab.js(f"(() => {{ const b = {PHOTO_BUTTON}; b && b.click(); return !!b; }})()")
+            if not tab.wait(DIALOG_FILE, 15):
+                raise SystemExit("the editor has no photo field; nothing was posted")
+            before = tab.js("document.querySelectorAll('[role=dialog] img').length") or 0
+            tab.upload(DIALOG_FILE, images)
+            if not tab.wait(f"document.querySelectorAll('[role=dialog] img').length >= {before + len(images)}", 60):
+                raise SystemExit("the photos did not appear in the editor; nothing was posted")
+            time.sleep(2)
         if not tab.js(f"!!({POST_BUTTON})"):
             raise SystemExit("no Post button in the editor")
         if not send:
             _discard(tab)
-            return "check ok: group found, editor opened, text fits, Post button present; draft discarded, nothing posted"
+            return (f"check ok: {'Page' if page else 'group'} found, editor opened, text"
+                    f"{' and photos' if images else ''} in, Post button present; draft discarded, nothing posted")
         tab.js(f"(() => {{ {POST_BUTTON}.click(); return true; }})()")
         if not tab.wait(f"!({COMPOSER_BOX})", 40):
             raise SystemExit("the editor did not close after Post; check the group in `agent-reach login facebook`")
@@ -411,7 +445,41 @@ def bluesky(d: dict, send: bool) -> str:
     return f"posted: https://bsky.app/profile/{me}/post/{rkey}"
 
 
-SENDERS = {"facebook-group-post": facebook_group_post, "facebook-message": facebook_message,
+# ── Instagram (OpenCLI's post, reel and story in the logged-in browser) ──
+
+#: the sidebar's Profile link points to the logged-in account
+IG_ME = r"""[...document.querySelectorAll('a[href]')].filter(a => /^(profile|profil)$/i.test((a.textContent || '').trim())).map(a => a.getAttribute('href')).join(' ')"""
+
+
+def instagram(d: dict, send: bool) -> str:
+    from agent_reach.backends.opencli import opencli_call
+    want = _handle(d["expected_name"])
+    tab = Tab("https://www.instagram.com/", "instagram")
+    try:
+        tab.wait(IG_ME, 30)
+        me = (tab.js(IG_ME) or "").lower()
+    finally:
+        tab.close()
+    if f"/{want}/" not in me:
+        raise SystemExit(f"the browser is not logged in to Instagram as @{want} (it shows {me[:60]!r}); refusing")
+    media = [m["path"] for m in d.get("media") or []]
+    if not media:
+        raise SystemExit("an Instagram post needs a photo or a video")
+    if not send:
+        return f"check ok: logged in as @{want}, {len(media)} media file(s) ready; nothing posted"
+    if d["kind"] == "instagram-reel":
+        args = ["reel", "--video", media[0]] + ([d["text"]] if d["text"] else [])
+    elif d["kind"] == "instagram-story":
+        args = ["story", "--media", media[0]]
+    else:
+        args = ["post", "--media", ",".join(media)] + ([d["text"]] if d["text"] else [])
+    out = opencli_call("instagram", args, timeout=900)
+    return "posted: " + json.dumps(out, ensure_ascii=False)[:300]
+
+
+SENDERS = {"facebook-group-post": facebook_group_post, "facebook-page-post": facebook_group_post,
+           "instagram-post": instagram, "instagram-reel": instagram, "instagram-story": instagram,
+           "facebook-message": facebook_message,
            "linkedin-message": linkedin, "linkedin-connect": linkedin,
            "twitter-post": twitter, "twitter-reply": twitter,
            "bluesky-post": bluesky, "bluesky-reply": bluesky, "bluesky-message": bluesky}

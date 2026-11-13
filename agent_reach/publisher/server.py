@@ -42,7 +42,6 @@ ROUTES = [
     ("POST", r"/v1/accounts", lambda db, b, a, m: core.create_account(db, b, a)),
     ("PUT", r"/v1/accounts/([\w-]+)/credentials", lambda db, b, a, m: core.set_credentials(db, m[1], b, a)),
     ("POST", r"/v1/accounts/([\w-]+)/check", lambda db, b, a, m: core.check_account(db, m[1], a)),
-    ("POST", r"/v1/accounts/([\w-]+)/oauth", lambda db, b, a, m: core.connect_oauth(db, m[1], b, a)),
     ("POST", r"/v1/preview", lambda db, b, a, m: core.preview(db, b)),
     ("POST", r"/v1/posts", lambda db, b, a, m: core.enqueue(db, b, a)),
     ("GET", r"/v1/posts/(\d+)", lambda db, b, a, m: core.get_post(db, int(m[1]))),
