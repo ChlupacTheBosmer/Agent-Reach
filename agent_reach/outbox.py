@@ -33,7 +33,8 @@ import sys
 import time
 from pathlib import Path
 
-KINDS = ("facebook-group-post", "facebook-page-post", "facebook-message", "linkedin-message", "linkedin-connect",
+KINDS = ("facebook-group-post", "facebook-page-post", "facebook-message", "linkedin-post", "linkedin-page-post",
+         "linkedin-message", "linkedin-connect",
          "twitter-post", "twitter-reply", "bluesky-post", "bluesky-reply", "bluesky-message",
          "instagram-post", "instagram-reel")
 HOSTS = {"facebook": "facebook.com", "linkedin": "linkedin.com", "twitter": "x.com", "bluesky": "bsky.app",
@@ -119,9 +120,12 @@ class Tab:
         pacing.before(site)
         browser.ensure_running()
         self.old, cdp._TIMEOUT = cdp._TIMEOUT, 30
-        self.id = (cdp.call("Target.createTarget", {"url": url}) or {}).get("targetId")
+        # blank first: the launcher answers the proxy's login only once it is attached to the new page
+        self.id = (cdp.call("Target.createTarget", {"url": "about:blank"}) or {}).get("targetId")
         if not self.id:
             raise SystemExit(f"could not open {url} in the Agent Reach browser")
+        time.sleep(1.0)
+        cdp.call("Page.navigate", {"url": url}, target_id=self.id)
 
     def js(self, expression: str):
         res = self.cdp.call("Runtime.evaluate", {"expression": f"JSON.stringify(({expression}))", "returnByValue": True,
@@ -581,7 +585,71 @@ def instagram(d: dict, send: bool) -> str:
         tab.close()
 
 
-SENDERS = {"facebook-group-post": facebook_group_post, "facebook-page-post": facebook_group_post,
+# ── LinkedIn posts: the profile's "Start a post", or a company page's admin "Create" ──
+
+LI_START = r"""[...document.querySelectorAll('[role=main] button, [role=main] [role=button], main button')].find(b => /^(start a post|začít příspěvek|začněte příspěvek|vytvořit příspěvek|create a post|create|vytvořit)$/i.test((b.innerText || b.getAttribute('aria-label') || '').trim()))"""
+LI_MENU_POST = r"""[...document.querySelectorAll('[role=menu] [role=menuitem], [role=menu] button, .artdeco-dropdown__content button, .artdeco-dropdown__content [role=button]')].find(b => /^(start a post|začít příspěvek|příspěvek|post)$/i.test((b.innerText || '').trim()))"""
+LI_BOX = r"""[...document.querySelectorAll('[role=dialog] [role=textbox][contenteditable=true]')].pop()"""
+LI_DIALOG = f"(({LI_BOX}) || {{closest: () => null}}).closest('[role=dialog]')"
+LI_MEDIA = f"""[...((({LI_DIALOG}) || document.createElement('div')).querySelectorAll('button[aria-label]'))].find(b => /media|photo|médi|fotk/i.test(b.getAttribute('aria-label')))"""
+LI_FILE = r"""[...document.querySelectorAll('input[type=file]')].filter(f => /image/.test(f.accept || 'image')).pop()"""
+LI_NEXT = r"""[...document.querySelectorAll('[role=dialog] button')].find(b => /^(next|další|done|hotovo)$/i.test((b.innerText || '').trim()) && !b.disabled)"""
+LI_POST = r"""[...document.querySelectorAll('[role=dialog] button')].find(b => /^(post|zveřejnit|publikovat)$/i.test((b.innerText || '').trim()))"""
+
+
+def linkedin_post(d: dict, send: bool) -> str:
+    page = d["kind"] == "linkedin-page-post"
+    url = d["target"].rstrip("/") + "/admin/dashboard/" if page else "https://www.linkedin.com/feed/"
+    tab = Tab(url, "linkedin")
+    try:
+        tab.wait("document.querySelector('main, [role=main]')", 30)
+        time.sleep(4)
+        if not tab.click(LI_START):
+            raise SystemExit("no 'Start a post' / 'Create' button (not a page admin, or not logged in); nothing was posted")
+        time.sleep(2)
+        if page and not tab.js(f"!!({LI_BOX})"):
+            tab.click(LI_MENU_POST)
+        if not tab.wait(LI_BOX, 30):
+            raise SystemExit("the post editor did not open; nothing was posted")
+        if _norm(d["expected_name"]).lower() not in _norm(tab.js(f"(({LI_DIALOG}) || {{}}).innerText || ''") or "").lower():
+            tab.key("Escape")
+            raise SystemExit(f"the editor does not show {d['expected_name']!r} as the author; refusing to post")
+        images = [m["path"] for m in d.get("media") or []]
+        if images:
+            tab.click(LI_MEDIA)
+            if not tab.wait(LI_FILE, 15):
+                raise SystemExit("no photo field in LinkedIn's editor; nothing was posted")
+            tab.upload(LI_FILE, images)
+            time.sleep(5)
+            for _ in range(2):  # LinkedIn shows a media step ("Next"/"Done") before returning to the text
+                if tab.js(f"!!({LI_BOX})") and not tab.js(f"!!({LI_NEXT})"):
+                    break
+                tab.click(LI_NEXT)
+                time.sleep(3)
+            if not tab.wait(LI_BOX, 30):
+                raise SystemExit("LinkedIn's editor did not come back after the photos; nothing was posted")
+        tab.js(f"(() => {{ const x = {LI_BOX}; x.focus(); x.click(); return true; }})()")
+        tab.type_lines(d["text"], newline_shift=False)
+        time.sleep(1.5)
+        typed = tab.js(f"(() => {{ const x = {LI_BOX}; return x ? x.innerText : ''; }})()") or ""
+        if _norm(d["text"])[:200] not in _norm(typed):
+            raise SystemExit("the editor does not contain the approved text; nothing was posted")
+        if not tab.wait(f"(() => {{ const b = {LI_POST}; return !!b && !b.disabled; }})()", 60):
+            raise SystemExit("the Post button is missing or disabled; nothing was posted")
+        if not send:
+            tab.key("Escape")
+            time.sleep(1)
+            tab.click(r"""[...document.querySelectorAll('[role=alertdialog] button, [role=dialog] button')].find(b => /^(discard|zahodit|zrušit)$/i.test((b.innerText || '').trim()))""")
+            return f"check ok: editor opened as {d['expected_name']}, text{' and photos' if images else ''} in, Post ready; discarded, nothing posted"
+        tab.click(LI_POST)
+        if not tab.wait(f"!({LI_BOX})", 60):
+            raise unknown("LinkedIn's editor did not close after Post")
+        return "posted"
+    finally:
+        tab.close()
+
+
+SENDERS = {"facebook-group-post": facebook_group_post, "linkedin-post": linkedin_post, "linkedin-page-post": linkedin_post, "facebook-page-post": facebook_group_post,
            "instagram-post": instagram, "instagram-reel": instagram,
            "facebook-message": facebook_message,
            "linkedin-message": linkedin, "linkedin-connect": linkedin,

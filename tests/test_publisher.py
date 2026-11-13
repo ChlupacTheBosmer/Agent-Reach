@@ -233,3 +233,26 @@ def test_a_crash_or_timeout_during_publish_is_unknown_not_failed(db, monkeypatch
     core.enqueue(db, {"account": acc["id"], "kind": "bluesky-post", "text": "Hi", "confirm": p["hash"], "author": "petr"}, "petr")
     monkeypatch.setattr(core, "in_home", lambda *a, **k: {"ok": False, "error": "UNKNOWN: the publish step did not finish in 1800 s"})
     assert core.run_due(db)["status"] == "unknown"
+
+
+def test_browser_accounts_take_turns_and_the_view_stays_on_its_site(db, monkeypatch):
+    monkeypatch.setattr(core, "_run_job", lambda acc, cmd, payload, timeout: {"ok": True, "result": "T1"} if cmd == "open" else {"ok": True})
+    sent = []
+    monkeypatch.setattr(core, "_cdp", lambda method, params, target: sent.append((method, target)) or {})
+    a = core.create_account(db, {"network": "twitter", "label": "A", "owner": "V4AIR", "handle": "a", "proxy": "http://u:p@h:1"}, "petr")
+    b = core.create_account(db, {"network": "twitter", "label": "B", "owner": "V4AIR", "handle": "b", "proxy": "http://u:p@h:2"}, "petr")
+    core._release(a["id"]), core._release(b["id"])
+    core.view_start(db, a["id"], "petr")
+    with pytest.raises(core.Refused, match="busy with twitter-a"):
+        core._claim(b["id"], 60, wait=0)
+    core.view_input(db, a["id"], {"type": "click", "x": 10, "y": 20})
+    assert sent and all(t == "T1" for _, t in sent)
+    with pytest.raises(core.Refused, match="only opens x.com"):
+        core.view_input(db, a["id"], {"type": "goto", "url": "https://evil.example/login"})
+    with pytest.raises(core.Refused, match="not open"):
+        core.view_input(db, b["id"], {"type": "text", "text": "secret"})
+    monkeypatch.setattr(core, "check_account", lambda db_, acc, actor: {"ok": True})
+    core.view_stop(db, a["id"], "petr")
+    core._claim(b["id"], 60, wait=0)  # free again
+    core._release(b["id"])
+    assert "secret" not in json.dumps(store.rows(db.execute("SELECT * FROM log")))

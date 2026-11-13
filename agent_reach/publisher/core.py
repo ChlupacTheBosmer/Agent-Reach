@@ -1,12 +1,14 @@
 """Publisher logic: networks, accounts and their homes, preview + hash, confirmed queue, running a post."""
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
 import re
 import subprocess
 import sys
+import threading
 import time
 from urllib.parse import urlsplit
 
@@ -29,12 +31,18 @@ NETWORKS = {
     "instagram": {"route": "browser", "kinds": {
         "instagram-post": {"text": 2200, "images": 10, "min_media": 1, "target": "own", "media": "image or video"},
         "instagram-reel": {"text": 2200, "images": 1, "min_media": 1, "target": "own", "media": "video"}}},
+    "linkedinpage": {"route": "browser", "kinds": {
+        "linkedin-page-post": {"text": 3000, "images": 9, "target": "own", "media": "image"}}},
     "linkedin": {"route": "browser", "kinds": {
+        "linkedin-post": {"text": 3000, "images": 9, "target": "own", "media": "image"},
         "linkedin-message": {"text": 2000, "images": 0, "target": "thread"},
         "linkedin-connect": {"text": 300, "images": 0, "target": "person"}}},
 }
 OWN_URL = {"bluesky": "https://bsky.app/profile/{h}", "twitter": "https://x.com/{h}",
-           "facebookpage": "https://www.facebook.com/{h}", "instagram": "https://www.instagram.com/{h}/"}
+           "facebookpage": "https://www.facebook.com/{h}", "instagram": "https://www.instagram.com/{h}/",
+           "linkedin": "https://www.linkedin.com/in/{h}/", "linkedinpage": "https://www.linkedin.com/company/{h}/"}
+#: networks whose posts are checked against the name the page shows (the account's label), not the handle
+NAMED = {"facebookpage", "linkedin", "linkedinpage"}
 #: Account-home settings each network accepts (written to that home's Agent Reach config, never returned).
 CREDENTIALS = {"bluesky": ("bluesky_handle", "bluesky_app_password")}
 
@@ -180,6 +188,7 @@ def groups(db, account_id: str, actor: str) -> list:
 
 
 def check_account(db, account_id: str, actor: str) -> dict:
+    _ACCOUNTS_CACHE[account_id] = account(db, account_id)["handle"]
     out = in_home(account_id, "check", {})
     status = "ok" if out.get("ok") else ("needs-login" if account(db, account_id)["route"] == "browser" else "needs-credentials")
     db.execute("UPDATE accounts SET status=? WHERE id=?", (status, account_id))
@@ -223,7 +232,7 @@ def normalize(db, body: dict) -> dict:
         if not acc["handle"]:
             raise Refused("the account has no handle yet; set its credentials or handle first")
         target = OWN_URL[acc["network"]].format(h=acc["handle"])
-        expected = acc["label"] if acc["network"] == "facebookpage" else acc["handle"]  # a Page shows its name
+        expected = acc["label"] if acc["network"] in NAMED else acc["handle"]  # pages and profiles show a name
     else:
         target, expected = (body.get("target") or "").strip(), (body.get("expected_name") or "").strip()
         if not target or not expected:
@@ -286,11 +295,55 @@ def cancel(db, post_id: int, actor: str) -> dict:
 
 # ── running ──
 
+# ── one browser at a time ──
+# All account browsers share the debugging port and OpenCLI's bridge port, so they take turns. A job holds the browser
+# while it runs (and closes it at the end); the live login view holds it while someone looks, at most VIEW_HOLD seconds
+# after the last frame. ponytail: one global browser; per-account ports if several must run at once.
+
+VIEW_HOLD = 300
+_browser_lock = threading.Lock()
+_browser = {"account": None, "until": 0.0, "target": None}
+
+
+def _claim(account_id: str, seconds: float, wait: float = 1200) -> None:
+    end = time.time() + wait
+    while True:
+        with _browser_lock:
+            holder, now = _browser["account"], time.time()
+            if holder in (None, account_id) or _browser["until"] < now:
+                stale = holder if holder not in (None, account_id) else None
+                _browser.update(account=account_id, until=now + seconds)
+                break
+        if time.time() > end:
+            raise Refused(f"the browser is busy with {holder}; try again in a few minutes")
+        time.sleep(2)
+    if stale:  # someone left a login view open: save that account's cookies and close its browser
+        _run_job(stale, "close", {}, 120)
+
+
+def _release(account_id: str) -> None:
+    with _browser_lock:
+        if _browser["account"] == account_id:
+            _browser.update(account=None, until=0.0, target=None)
+
+
 def in_home(account_id: str, command: str, payload: dict, timeout: float = 120) -> dict:
-    """Run one job step in that account's own Agent Reach home (separate process = no shared state)."""
+    """Run one job step in that account's own Agent Reach home; browser accounts take turns for the browser."""
+    if account_id.split("-")[0] == "bluesky" or command == "configure":
+        return _run_job(account_id, command, payload, timeout)
+    _claim(account_id, timeout + 60)
+    try:
+        return _run_job(account_id, command, payload, timeout)
+    finally:
+        _release(account_id)
+
+
+def _run_job(account_id: str, command: str, payload: dict, timeout: float) -> dict:
     h = home(account_id)
     h.mkdir(parents=True, exist_ok=True)
     env = {**os.environ, "HOME": str(h), "PUBLISHER_ACCOUNT": account_id, "PUBLISHER_DATA": str(store.data_dir())}
+    with contextlib.suppress(Exception):
+        env["PUBLISHER_ACCOUNT_JSON"] = json.dumps({"handle": _ACCOUNTS_CACHE.get(account_id, "")})
     try:
         p = subprocess.run([sys.executable, "-m", "agent_reach.publisher.job", command], input=json.dumps(payload),
                            capture_output=True, text=True, timeout=timeout, env=env)
@@ -319,3 +372,97 @@ def run_due(db, now=None) -> dict | None:
                (status, out.get("result") or out.get("error") or "", time.time(), row["id"]))
     store.log(db, "publisher", f"post.{status}", {"id": row["id"], **out})
     return get_post(db, row["id"])
+
+
+# ── live login view: a person logs in to a browser account through the app (they type; the agent never does) ──
+
+_ACCOUNTS_CACHE: dict = {}  # account id -> handle, for the browser check
+KEYS = {"Enter": 13, "Tab": 9, "Backspace": 8, "Escape": 27, "ArrowDown": 40, "ArrowUp": 38, "ArrowLeft": 37, "ArrowRight": 39}
+HOSTS = {"twitter": ("x.com", "twitter.com"), "facebook": ("facebook.com",), "facebookpage": ("facebook.com",),
+         "instagram": ("instagram.com",), "linkedin": ("linkedin.com",), "linkedinpage": ("linkedin.com",)}
+
+
+def _view_account(db, account_id: str) -> dict:
+    acc = account(db, account_id)
+    if acc["route"] != "browser":
+        raise Refused("only browser accounts log in through the view")
+    _ACCOUNTS_CACHE[account_id] = acc["handle"]
+    return acc
+
+
+def _holding(account_id: str) -> str:
+    with _browser_lock:
+        if _browser["account"] != account_id or not _browser["target"]:
+            raise Refused("the login view is not open (it closes after 5 minutes without a look)")
+        _browser["until"] = time.time() + VIEW_HOLD
+        return _browser["target"]
+
+
+def view_start(db, account_id: str, actor: str) -> dict:
+    _view_account(db, account_id)
+    _claim(account_id, VIEW_HOLD, wait=30)
+    out = _run_job(account_id, "open", {}, 120)
+    if not out.get("ok"):
+        _release(account_id)
+        raise Refused(out.get("error") or "the browser did not open")
+    with _browser_lock:
+        _browser["target"] = out["result"]
+    store.log(db, actor, "view.start", {"account": account_id})
+    return {"ok": True}
+
+
+def _cdp(method: str, params: dict, target: str):
+    from agent_reach.runtime import cdp
+    return cdp.call(method, params, target_id=target)
+
+
+def view_frame(db, account_id: str) -> dict:
+    target = _holding(account_id)
+    shot = _cdp("Page.captureScreenshot", {"format": "jpeg", "quality": 55}, target) or {}
+    info = _cdp("Runtime.evaluate", {"expression": "JSON.stringify([innerWidth, innerHeight, location.href])",
+                                     "returnByValue": True}, target) or {}
+    try:
+        w, h, url = json.loads((info.get("result") or {}).get("value") or "[0,0,\"\"]")
+    except ValueError:
+        w, h, url = 0, 0, ""
+    if not shot.get("data"):
+        raise Refused("no picture from the browser (still loading?)")
+    return {"image": shot["data"], "width": w, "height": h, "url": url}
+
+
+def view_input(db, account_id: str, body: dict) -> dict:
+    """Clicks, typed text and a few keys from the person looking at the view. Typed text is never logged."""
+    target, kind = _holding(account_id), body.get("type")
+    if kind == "click":
+        x, y = float(body["x"]), float(body["y"])
+        for t in ("mouseMoved", "mousePressed", "mouseReleased"):
+            _cdp("Input.dispatchMouseEvent", {"type": t, "x": x, "y": y, "button": "left", "clickCount": 0 if t == "mouseMoved" else 1}, target)
+    elif kind == "text":
+        _cdp("Input.insertText", {"text": str(body.get("text", ""))[:500]}, target)
+    elif kind == "key" and body.get("key") in KEYS:
+        k = body["key"]
+        for t in ("keyDown", "keyUp"):
+            _cdp("Input.dispatchKeyEvent", {"type": t, "key": k, "code": k, "windowsVirtualKeyCode": KEYS[k]}, target)
+    elif kind == "scroll":
+        _cdp("Input.dispatchMouseEvent", {"type": "mouseWheel", "x": 200, "y": 300, "deltaX": 0, "deltaY": float(body.get("dy", 400))}, target)
+    elif kind == "goto":
+        acc = account(db, account_id)
+        host = (urlsplit(str(body.get("url", ""))).hostname or "").lower()
+        if not any(host == d or host.endswith("." + d) for d in HOSTS[acc["network"]]):
+            raise Refused(f"the view only opens {', '.join(HOSTS[acc['network']])}")
+        _cdp("Page.navigate", {"url": body["url"]}, target)
+    else:
+        raise Refused("unknown input")
+    return {"ok": True}
+
+
+def view_stop(db, account_id: str, actor: str) -> dict:
+    _view_account(db, account_id)
+    with _browser_lock:
+        mine = _browser["account"] == account_id
+    if mine:
+        _run_job(account_id, "close", {}, 120)
+        _release(account_id)
+    db.execute("UPDATE accounts SET status='unchecked' WHERE id=?", (account_id,))
+    store.log(db, actor, "view.stop", {"account": account_id})
+    return check_account(db, account_id, actor)
