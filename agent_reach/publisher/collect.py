@@ -105,18 +105,27 @@ def twitter(acc: dict, known: dict) -> dict:
                       "type": "quote" if "quote" in action or "citov" in action else "mention" if "mention" in action or "zmín" in action else "reply",
                       "item_url": n.get("url", ""), "post_url": "", "author_handle": str(n.get("author", "")).lstrip("@"),
                       "author_name": str(n.get("author", "")), "text": n.get("text", ""), "created_at": None})
+    try:
+        tweets = rows(opencli_call("twitter", ["tweets", handle, "--limit", "20"], timeout=180))
+    except Exception as e:  # OpenCLI calls an empty timeline an error ("has no recent tweets")
+        if "no recent tweets" not in str(e):
+            raise
+        tweets = []
     posts = [{"url": t.get("url", ""), "text": t.get("text", ""), "created_at": _ts(t.get("created_at")),
               "likes": _num(t.get("likes")), "reposts": _num(t.get("retweets")), "replies": _num(t.get("replies")),
               "quotes": None, "views": _num(t.get("views")), "impressions": _num(t.get("views"))}
-             for t in rows(opencli_call("twitter", ["tweets", handle, "--limit", "20"], timeout=180)) if not t.get("is_retweet")]
+             for t in tweets if not t.get("is_retweet")]
     prof = (rows(opencli_call("twitter", ["profile", handle], timeout=120)) or [{}])[0]
     return {"inbox": inbox, "posts": posts,
             "profile": {"followers": _num(prof.get("followers")), "following": _num(prof.get("following")), "posts": _num(prof.get("tweets"))}}
 
 
-# ── Instagram: OpenCLI profile + recent posts; comments read from the post page (in the browser) ──
+# ── Instagram: read from the pages in the account's browser (profile header, grid, each post's description) ──
+# OpenCLI's Instagram readers call Instagram's private web API, which answers 404 from the server; the pages do not.
 
 IG_POSTS = r"""[...new Set([...document.querySelectorAll('main a[href*="/p/"], main a[href*="/reel/"]')].map(a => a.href.split('?')[0]))].slice(0, 12)"""
+IG_META = r"""(document.querySelector('meta[name=description]') || {}).content || ''"""
+IG_TIME = r"""(document.querySelector('main time[datetime], article time[datetime], time[datetime]') || {getAttribute: () => null}).getAttribute('datetime')"""
 IG_COMMENTS = r"""(() => {
   const out = [];
   for (const li of document.querySelectorAll('ul li, div[role=button] + div')) {
@@ -130,43 +139,65 @@ IG_COMMENTS = r"""(() => {
   }
   return out.slice(0, 50);
 })()"""
+#: posts opened per poll for their numbers (each is one page view at human pace)
+IG_DETAIL = 8
+_COUNT = r"(\d[\d\s.,]*\s*(?:tis\.|k|m|mil\.)?)"
+
+
+def ig_profile_counts(meta: str) -> dict:
+    """'104 Followers, 512 Following, 64 Posts - …' or 'Sledující (104), Sleduji (512), Příspěvky (64) – …' -> counts."""
+    out = {}
+    for key, words in {"followers": ("followers", "sledující"), "following": ("following", "sleduji"), "posts": ("posts", "příspěvk")}.items():
+        for w in words:
+            m = re.search(rf"{w}\w*\s*\(\s*{_COUNT}\s*\)", meta, re.I) or re.search(rf"{_COUNT}\s+{w}", meta, re.I)
+            if m:
+                out[key] = _num(m.group(1))
+                break
+    return out
+
+
+def ig_post_meta(meta: str) -> dict:
+    """'9 likes, 0 comments - ptrchlp dne September 23, 2024: "caption".' (likes may be hidden) -> numbers and caption."""
+    likes = re.search(rf"{_COUNT}\s*(?:likes?|to se mi líbí|označení)", meta, re.I)
+    comments = re.search(rf"{_COUNT}\s*(?:comments?|komentář)", meta, re.I)
+    cap = re.search(r':\s*["„“](.*)["“”]\s*\.?\s*$', meta, re.S)
+    return {"likes": _num(likes.group(1)) if likes else None, "comments": _num(comments.group(1)) if comments else None,
+            "caption": cap.group(1) if cap else ""}
 
 
 def instagram(acc: dict, known: dict) -> dict:
     from agent_reach import outbox
-    from agent_reach.backends.opencli import opencli_call
     handle = acc["handle"]
-    rows = lambda x: x if isinstance(x, list) else (x or {}).get("data", []) if isinstance(x, dict) else []  # noqa: E731
-    prof = (rows(opencli_call("instagram", ["profile", handle], timeout=180)) or [{}])[0]
-    recent = rows(opencli_call("instagram", ["user", handle, "--limit", "12"], timeout=180))
     tab = outbox.Tab(f"https://www.instagram.com/{handle}/", "instagram")
     try:
         tab.wait("document.querySelector('main')", 30)
         time.sleep(3)
+        profile = ig_profile_counts(tab.js(IG_META) or "")
         urls = tab.js(IG_POSTS) or []
+        posts, inbox = [], []
+        for url in urls[:IG_DETAIL]:  # one tab, page after page, like a person scrolling through their own posts
+            tab.js(f"location.href = {json.dumps(url)}")
+            time.sleep(2)
+            tab.wait("document.querySelector('time[datetime]')", 30)
+            time.sleep(2)
+            m = ig_post_meta(tab.js(IG_META) or "")
+            posts.append({"url": url, "text": m["caption"], "created_at": _ts(tab.js(IG_TIME)), "likes": m["likes"],
+                          "replies": m["comments"], "reposts": None, "quotes": None, "views": None, "impressions": None})
+            if (m["comments"] or 0) > int(known.get(url, 0) or 0) and len([p for p in posts if p.get("_read")]) < MAX_DETAIL:
+                posts[-1]["_read"] = True
+                for c in tab.js(IG_COMMENTS) or []:
+                    if c["handle"].lower() == handle.lower():
+                        continue
+                    inbox.append({"id": "ig:" + _id(url, c["handle"], c["text"]), "type": "comment", "post_url": url,
+                                  "item_url": c.get("link") or url, "author_handle": c["handle"], "author_name": c["handle"],
+                                  "text": c["text"], "created_at": _ts(c.get("at"))})
+        posts += [{"url": u, "text": "", "created_at": None, "likes": None, "replies": None, "reposts": None, "quotes": None,
+                   "views": None, "impressions": None} for u in urls[IG_DETAIL:]]
     finally:
         tab.close()
-    posts, inbox = [], []
-    for i, r in enumerate(recent):  # user.js lists the grid in order; the grid links give the URLs
-        url = urls[i] if i < len(urls) else ""
-        posts.append({"url": url, "text": r.get("caption", ""), "created_at": _ts(r.get("date")), "likes": _num(r.get("likes")),
-                      "replies": _num(r.get("comments")), "reposts": None, "quotes": None, "views": None, "impressions": None})
-    changed = [p for p in posts if p["url"] and (p["replies"] or 0) > int(known.get(p["url"], 0) or 0)][:MAX_DETAIL]
-    for p in changed:
-        tab = outbox.Tab(p["url"], "instagram")
-        try:
-            tab.wait("document.querySelector('time')", 30)
-            time.sleep(3)
-            for c in tab.js(IG_COMMENTS) or []:
-                if c["handle"].lower() == handle.lower():
-                    continue
-                inbox.append({"id": "ig:" + _id(p["url"], c["handle"], c["text"]), "type": "comment", "post_url": p["url"],
-                              "item_url": c.get("link") or p["url"], "author_handle": c["handle"], "author_name": c["handle"],
-                              "text": c["text"], "created_at": _ts(c.get("at"))})
-        finally:
-            tab.close()
-    return {"inbox": inbox, "posts": posts,
-            "profile": {"followers": _num(prof.get("followers")), "following": _num(prof.get("following")), "posts": _num(prof.get("posts"))}}
+    for p in posts:
+        p.pop("_read", None)
+    return {"inbox": inbox, "posts": posts, "profile": profile}
 
 
 # ── LinkedIn: OpenCLI posts + analytics (profile); notifications page for comments and mentions ──
@@ -186,10 +217,10 @@ def linkedin(acc: dict, known: dict, page: bool = False) -> dict:
     posts = [{"url": p.get("url", ""), "text": p.get("body") or p.get("raw_text", ""), "created_at": _ts(p.get("posted_at")),
               "likes": _num(p.get("reactions")), "replies": _num(p.get("comments")), "reposts": _num(p.get("reposts")),
               "quotes": None, "views": None, "impressions": _num(p.get("impressions"))}
-             for p in rows(opencli_call("linkedin", ["posts", base, "--limit", "20"], timeout=240))]
+             for p in rows(opencli_call("linkedin", ["posts", "--profile-url", base, "--limit", "20"], timeout=240))]
     profile = {}
     if not page:
-        a = (rows(opencli_call("linkedin", ["profile-analytics", base], timeout=180)) or [{}])[0]
+        a = (rows(opencli_call("linkedin", ["profile-analytics", "--profile-url", base], timeout=180)) or [{}])[0]
         profile = {"followers": _num(a.get("followers")), "profile_views": _num(a.get("profile_views")),
                    "impressions": _num(a.get("post_impressions")), "connections": _num(a.get("connections"))}
     url = f"https://www.linkedin.com/company/{acc['handle']}/admin/notifications/all/" if page else "https://www.linkedin.com/notifications/"

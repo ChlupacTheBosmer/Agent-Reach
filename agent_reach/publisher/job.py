@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 import json
+import re
+import time
 import os
 import sys
 import tempfile
@@ -55,6 +57,9 @@ def setup_home() -> None:
                              launcher_python=str(shared / "tools" / "cloakbrowser" / "venv" / "bin" / "python"))
 
 
+VIEW_SIZE = (1280, 880)
+
+
 def open_view(payload: dict) -> dict:
     """Open the account's browser (headless, through its proxy) on the login page; the server streams it."""
     from agent_reach.runtime import browser, cdp
@@ -65,6 +70,10 @@ def open_view(payload: dict) -> dict:
         raise SystemExit("could not open a page in the account's browser")
     import time
     time.sleep(1.0)  # let the launcher attach (it answers the proxy's login), then load the page
+    # a laptop-sized window: the picture in the app is then about life size (1920 px made it tiny, popups made it huge)
+    win = (cdp.call("Browser.getWindowForTarget", {"targetId": target}) or {}).get("windowId")
+    if win:
+        cdp.call("Browser.setWindowBounds", {"windowId": win, "bounds": {"width": VIEW_SIZE[0], "height": VIEW_SIZE[1], "windowState": "normal"}})
     cdp.call("Page.navigate", {"url": url}, target_id=target)
     browser.touch()
     return {"ok": True, "result": target}
@@ -88,7 +97,6 @@ def _browser_check() -> dict:
     tab = outbox.Tab(url, net.replace("page", ""))
     try:
         tab.wait("document.readyState === 'complete'", 30)
-        import time
         time.sleep(4)
         if tab.js(PASSWORD_FIELD) or tab.js(r"/\/(login|authwall|checkpoint|accounts\/login)/.test(location.pathname)"):
             return {"ok": False, "error": "not logged in: open the login view and log in"}
@@ -104,6 +112,9 @@ def _browser_check() -> dict:
             want = (acc.get("handle") or "").lower()
             if not me:
                 return {"ok": False, "error": "not logged in (or Instagram asks about cookies): open the login view"}
+            found = re.search(r"/([\w.]+)/", me)
+            if not want and found:  # no handle given: the logged-in one becomes the account's handle
+                return {"ok": True, "result": f"logged in as @{found.group(1)}", "handle": found.group(1)}
             return {"ok": True, "result": f"logged in as @{want}"} if f"/{want}/" in me else \
                 {"ok": False, "error": f"logged in, but not as @{want} ({me[:40]!r})"}
         if net == "twitter":
@@ -111,8 +122,18 @@ def _browser_check() -> dict:
             want = (acc.get("handle") or "").lower()
             if not me:
                 return {"ok": False, "error": "not logged in: open the login view and log in"}
+            found = re.search(r"@(\w+)", me)
+            if not want and found:
+                return {"ok": True, "result": f"logged in as @{found.group(1)}", "handle": found.group(1)}
             return {"ok": True, "result": f"logged in as @{want}"} if f"@{want}" in me else \
                 {"ok": False, "error": f"logged in, but not as @{want}"}
+        if net == "linkedin" and not acc.get("handle"):  # /in/me/ redirects to the member's own profile address
+            tab.js("location.href = 'https://www.linkedin.com/in/me/'")
+            for _ in range(15):
+                time.sleep(1.5)
+                found = re.search(r"linkedin\.com/in/([^/?#]+)", tab.js("location.href") or "")
+                if found and found.group(1) != "me":
+                    return {"ok": True, "result": f"logged in as {found.group(1)}", "handle": found.group(1)}
         return {"ok": True, "result": "logged in"}
     finally:
         tab.close()

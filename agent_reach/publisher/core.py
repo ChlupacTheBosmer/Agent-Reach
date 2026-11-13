@@ -229,6 +229,8 @@ def groups(db, account_id: str, actor: str) -> list:
 def check_account(db, account_id: str, actor: str) -> dict:
     _ACCOUNTS_CACHE[account_id] = account(db, account_id)["handle"]
     out = in_home(account_id, "check", {})
+    if out.get("ok") and out.get("handle") and not account(db, account_id)["handle"]:
+        db.execute("UPDATE accounts SET handle=? WHERE id=?", (str(out["handle"]).lstrip("@")[:80], account_id))
     status = "ok" if out.get("ok") else ("needs-login" if account(db, account_id)["route"] == "browser" else "needs-credentials")
     db.execute("UPDATE accounts SET status=? WHERE id=?", (status, account_id))
     store.log(db, actor, "account.check", {"account": account_id, **out})
@@ -427,7 +429,8 @@ def run_due(db, now=None) -> dict | None:
 # ── live login view: a person logs in to a browser account through the app (they type; the agent never does) ──
 
 _ACCOUNTS_CACHE: dict = {}  # account id -> handle, for the browser check
-KEYS = {"Enter": 13, "Tab": 9, "Backspace": 8, "Escape": 27, "ArrowDown": 40, "ArrowUp": 38, "ArrowLeft": 37, "ArrowRight": 39}
+KEYS = {"Enter": 13, "Tab": 9, "Backspace": 8, "Escape": 27, "ArrowDown": 40, "ArrowUp": 38, "ArrowLeft": 37, "ArrowRight": 39,
+        "Delete": 46, "Home": 36, "End": 35, "PageUp": 33, "PageDown": 34}
 HOSTS = {"twitter": ("x.com", "twitter.com"), "facebook": ("facebook.com",), "facebookpage": ("facebook.com",),
          "instagram": ("instagram.com",), "linkedin": ("linkedin.com",), "linkedinpage": ("linkedin.com",)}
 
@@ -466,8 +469,21 @@ def _cdp(method: str, params: dict, target: str):
     return cdp.call(method, params, target_id=target)
 
 
+def _follow_popup(account_id: str, target: str) -> str:
+    """A login that opens a window (captcha, 'continue with') is shown instead of the page that opened it."""
+    infos = (_cdp("Target.getTargets", {}, None) or {}).get("targetInfos", [])
+    pages = {t["targetId"] for t in infos if t.get("type") == "page"}
+    child = [t["targetId"] for t in infos if t.get("type") == "page" and t.get("openerId") == target]
+    new = child[-1] if child else target if target in pages else next(iter(pages), target)
+    if new != target:
+        with _browser_lock:
+            if _browser["account"] == account_id:
+                _browser["target"] = new
+    return new
+
+
 def view_frame(db, account_id: str) -> dict:
-    target = _holding(account_id)
+    target = _follow_popup(account_id, _holding(account_id))
     shot = _cdp("Page.captureScreenshot", {"format": "jpeg", "quality": 55}, target) or {}
     info = _cdp("Runtime.evaluate", {"expression": "JSON.stringify([innerWidth, innerHeight, location.href])",
                                      "returnByValue": True}, target) or {}
@@ -494,7 +510,8 @@ def view_input(db, account_id: str, body: dict) -> dict:
         for t in ("keyDown", "keyUp"):
             _cdp("Input.dispatchKeyEvent", {"type": t, "key": k, "code": k, "windowsVirtualKeyCode": KEYS[k]}, target)
     elif kind == "scroll":
-        _cdp("Input.dispatchMouseEvent", {"type": "mouseWheel", "x": 200, "y": 300, "deltaX": 0, "deltaY": float(body.get("dy", 400))}, target)
+        _cdp("Input.dispatchMouseEvent", {"type": "mouseWheel", "x": float(body.get("x", 200)), "y": float(body.get("y", 300)),
+                                          "deltaX": 0, "deltaY": max(-2000.0, min(2000.0, float(body.get("dy", 400))))}, target)
     elif kind == "goto":
         acc = account(db, account_id)
         host = (urlsplit(str(body.get("url", ""))).hostname or "").lower()

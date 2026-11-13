@@ -127,3 +127,12 @@ def test_members_only_see_the_accounts_they_may_use(db, monkeypatch):
     insights.collect_account(db, "bluesky-v4air")
     assert insights.metrics(db, {"accounts": []})["posts"] == [] and insights.metrics(db, {"accounts": []})["comments"]["total"] == 0
     assert insights.inbox_query(db, {"account": []}) == [] and len(insights.inbox_query(db, {"id": "bsky:1"})) == 1
+
+
+def test_instagram_page_parsers():
+    from agent_reach.publisher.collect import ig_post_meta, ig_profile_counts
+    assert ig_profile_counts("Sledující (104), Sleduji (512), Příspěvky (64) – Petr Chlup") == {"followers": 104, "following": 512, "posts": 64}
+    assert ig_profile_counts("1,234 Followers, 512 Following, 64 Posts - See") == {"followers": 1234, "following": 512, "posts": 64}
+    m = ig_post_meta('9 likes, 0 comments - ptrchlp dne September 23, 2024: "Romania 2024.". ')
+    assert (m["likes"], m["comments"], m["caption"]) == (9, 0, "Romania 2024.")
+    assert ig_post_meta('3 comments - ptrchlp on May 1, 2026: "Hi"')["likes"] is None
