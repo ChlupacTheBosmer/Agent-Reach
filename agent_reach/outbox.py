@@ -324,14 +324,33 @@ def _bsky_session() -> dict:
     return _bsky("POST", "com.atproto.server.createSession", {"identifier": handle, "password": password})
 
 
-def _facets(text: str) -> list:
-    """Clickable links: Bluesky needs byte offsets for every URL in the text."""
-    out, raw = [], text.encode("utf-8")
+def _resolve_handle(handle: str):
+    """A Bluesky handle -> its DID through the public API, or None when it does not exist."""
+    import urllib.error
+    import urllib.request
+    try:
+        url = f"https://public.api.bsky.app/xrpc/com.atproto.identity.resolveHandle?handle={handle}"
+        with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "agent-reach-outbox"}), timeout=20) as r:
+            return json.loads(r.read()).get("did")
+    except (urllib.error.URLError, ValueError, OSError):
+        return None
+
+
+def _facets(text: str, resolve=None) -> list:
+    """Clickable links and real @mentions: Bluesky needs byte offsets (and, for mentions, the account's DID)."""
+    resolve = resolve or _resolve_handle
+
+    def span(start: int, end: int) -> dict:
+        return {"byteStart": len(text[:start].encode("utf-8")), "byteEnd": len(text[:end].encode("utf-8"))}
+    out = []
     for m in re.finditer(r"https?://[^\s)\]>\"']+", text):
-        start = len(text[:m.start()].encode("utf-8"))
-        out.append({"index": {"byteStart": start, "byteEnd": start + len(m.group(0).encode("utf-8"))},
-                    "features": [{"$type": "app.bsky.richtext.facet#link", "uri": m.group(0)}]})
-    return out if raw else []
+        out.append({"index": span(m.start(), m.end()), "features": [{"$type": "app.bsky.richtext.facet#link", "uri": m.group(0)}]})
+    for m in re.finditer(r"(?<![\w@/.])@([a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)+)", text):
+        did = resolve(m.group(1).rstrip(".").lower())
+        if did:  # an unknown handle stays plain text
+            out.append({"index": span(m.start(), m.start() + 1 + len(m.group(1).rstrip("."))),
+                        "features": [{"$type": "app.bsky.richtext.facet#mention", "did": did}]})
+    return out
 
 
 def bluesky(d: dict, send: bool) -> str:

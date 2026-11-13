@@ -90,3 +90,12 @@ def test_bluesky_link_facets_use_byte_offsets():
     facet = outbox._facets(text)[0]
     raw = text.encode("utf-8")
     assert raw[facet["index"]["byteStart"]:facet["index"]["byteEnd"]] == b"https://v4air.eu/apply"
+
+
+def test_bluesky_mentions_become_tags_and_unknown_handles_stay_text():
+    text = "Díky @alice.bsky.social a @nobody.example za pomoc, mail@x.cz nic"
+    facets = outbox._facets(text, resolve=lambda h: "did:plc:alice" if h == "alice.bsky.social" else None)
+    raw = text.encode("utf-8")
+    mentions = [f for f in facets if f["features"][0]["$type"].endswith("#mention")]
+    assert len(mentions) == 1 and mentions[0]["features"][0]["did"] == "did:plc:alice"
+    assert raw[mentions[0]["index"]["byteStart"]:mentions[0]["index"]["byteEnd"]] == b"@alice.bsky.social"

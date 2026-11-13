@@ -94,6 +94,9 @@ def test_queue_runs_due_posts_once_and_never_retries_failures(db, monkeypatch):
 
 
 def test_job_publishes_bluesky_images_through_the_official_api(tmp_path, monkeypatch):
+    from agent_reach.config import Config
+    Config().set("bluesky_handle", "v4air.bsky.social")
+    Config().set("bluesky_app_password", "test-app-password")
     img = tmp_path / "a.png"
     img.write_bytes(b"\x89PNG fake")
     monkeypatch.setattr(job, "_download", lambda media, folder: [{"path": str(img), "alt": "poster", "mime": "image/png"}])
@@ -139,3 +142,10 @@ def test_http_api_end_to_end(tmp_path, monkeypatch):
         assert call("GET", "/healthz", signed=False) == (200, {"ok": True})
     finally:
         httpd.shutdown()
+
+
+def test_accounts_that_are_not_ready_cannot_queue(db):
+    acc = core.create_account(db, {"network": "bluesky", "label": "New", "owner": "petr", "handle": "n.bsky.social"}, "petr")
+    body = {"account": acc["id"], "kind": "bluesky-post", "text": "Hi"}
+    with pytest.raises(core.Refused, match="not ready"):
+        core.enqueue(db, {**body, "confirm": core.preview(db, body)["hash"], "author": "petr"}, "petr")

@@ -61,6 +61,11 @@ def publish(payload: dict) -> dict:
     post = payload["post"]
     d = {**post, "status": "approved", "created": "", "result": ""}
     outbox.validate(d)
+    if post["kind"].startswith("bluesky"):
+        from agent_reach.config import Config
+        cfg = Config(read_only=True)
+        if not cfg.get("bluesky_handle") or not cfg.get("bluesky_app_password"):
+            raise SystemExit("this Bluesky account has no app password yet: enter it on the accounts page")
     site = post["kind"].split("-")[0] + ":write"
     gap, extra, cap = outbox.WRITE_LIMITS[site]
     pacing.LIMITS.setdefault(site, (gap, extra, cap))

@@ -168,6 +168,8 @@ def enqueue(db, body: dict, actor: str) -> dict:
     if not author:
         raise Refused("author is required")
     acc = account(db, post["account"])
+    if acc["status"] in ("needs-credentials", "needs-login", "paused", "new"):
+        raise Refused(f"account {acc['label']} is not ready ({acc['status']}): set it up on the accounts page and press Check")
     if acc["route"] == "browser" and not acc["proxy"]:
         raise Refused("this browser account has no proxy; it never posts from the server's own address")
     due = time.time()
