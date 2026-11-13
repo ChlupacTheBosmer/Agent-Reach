@@ -221,6 +221,8 @@ def unknown(why: str) -> SystemExit:
 PROFILE_PROMPT = r"""[...document.querySelectorAll('[role=main] [role=button] span')].filter(e => /^(co se vám honí hlavou|what's on your mind)\s*\?$/i.test((e.innerText || '').trim())).pop()"""
 #: a Facebook Note ("Nová poznámka"): not a post; the flow stops if one opens
 NOTE_DIALOG = r"""[...document.querySelectorAll('[role=dialog]')].some(d => /Nová poznámka|New note|poznámku na Messengeru|note on Messenger/i.test(d.innerText))"""
+#: a profile's editor ends with "Přidat" / "Post" (aria-label or text), not "Zveřejnit"
+PROFILE_POST_BUTTON = r"""[...((document.querySelector('[role=dialog] [role=textbox][contenteditable=true]') || {closest: () => null}).closest('[role=dialog]') || document.createElement('div')).querySelectorAll('[role=button]')].find(b => /^(přidat|post|zveřejnit)$/i.test((b.getAttribute('aria-label') || b.innerText || '').trim()))"""
 #: the audience button in the post editor ("Veřejné", "Přátelé", "Public", "Friends"): reported, never changed
 AUDIENCE = f"""(([...((({EDITOR}) || document).querySelectorAll('[role=button][aria-label]'))].find(b => /okruh|soukrom|privacy|audience/i.test(b.getAttribute('aria-label'))) || {{}}).innerText || '').trim()"""
 
@@ -279,7 +281,8 @@ def facebook_group_post(d: dict, send: bool) -> str:
             tab.upload(DIALOG_FILE, images)
             if not tab.wait(f"({EDITOR_IMAGES}) >= {len(images)}", 90):
                 raise SystemExit("the photos did not appear in the editor; nothing was posted")
-        if not tab.wait(POST_READY, 90):
+        button = PROFILE_POST_BUTTON if profile else POST_BUTTON
+        if not tab.wait(f"(() => {{ const b = {button}; return !!b && b.getAttribute('aria-disabled') !== 'true'; }})()", 90):
             raise SystemExit("the Post button is missing or stays disabled; nothing was posted")
         audience = _norm(tab.js(AUDIENCE) or "") if profile else ""
         seen = f"; audience: {audience or 'unknown'} (Facebook keeps your last choice)" if profile else ""
@@ -288,7 +291,10 @@ def facebook_group_post(d: dict, send: bool) -> str:
             where = "profile" if profile else "Page" if page else "group"
             return (f"check ok: {where} found, editor opened{' as the author' if page else ''}, text"
                     f"{' and photos' if images else ''} in, Post button ready{seen}; draft discarded, nothing posted")
-        tab.js(f"(() => {{ {POST_BUTTON}.click(); return true; }})()")
+        if profile:
+            tab.click(PROFILE_POST_BUTTON)
+        else:
+            tab.js(f"(() => {{ {POST_BUTTON}.click(); return true; }})()")
         if not tab.wait(f"!({COMPOSER_BOX})", 60):
             raise unknown("the editor did not close after Post")
         time.sleep(3)
@@ -299,9 +305,10 @@ def facebook_group_post(d: dict, send: bool) -> str:
 
 
 def _discard(tab: Tab) -> None:
-    tab.js(r"""(() => { const c = [...document.querySelectorAll('[role=dialog] [role=button][aria-label]')].find(b => /zavřít|close/i.test(b.getAttribute('aria-label'))); c && c.click(); return !!c; })()""")
+    """Close the editor and throw the draft away, with real clicks (Facebook ignores script clicks here)."""
+    tab.click(r"""[...document.querySelectorAll('[role=dialog] [role=button][aria-label]')].find(b => /zavřít|close/i.test(b.getAttribute('aria-label')))""")
     time.sleep(2)
-    tab.js(r"""(() => { const b = [...document.querySelectorAll('[role=dialog] [role=button]')].find(b => /^(zahodit|discard|leave|odejít)/i.test((b.getAttribute('aria-label') || b.innerText || '').trim())); b && b.click(); return !!b; })()""")
+    tab.click(r"""[...document.querySelectorAll('[role=dialog] [role=button]')].find(b => /^(zahodit|discard|leave|odejít|opustit)/i.test((b.getAttribute('aria-label') || b.innerText || '').trim()))""")
     time.sleep(1.5)
 
 
