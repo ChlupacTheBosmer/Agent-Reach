@@ -174,11 +174,22 @@ class Tab:
 
     def upload(self, expression: str, paths: list) -> None:
         """Put local files into the file input that `expression` returns, as a person picking them would."""
-        res = self.cdp.call("Runtime.evaluate", {"expression": expression}, target_id=self.id) or {}
-        oid = (res.get("result") or {}).get("objectId")
-        if not oid:
-            raise SystemExit("no file field to attach the media to; nothing was posted")
-        self.cdp.call("DOM.setFileInputFiles", {"files": paths, "objectId": oid}, target_id=self.id)
+        def attach(send):  # one connection: the element found by the first command is only valid on it
+            oid = ((send("Runtime.evaluate", {"expression": expression}) or {}).get("result") or {}).get("objectId")
+            if not oid:
+                return "no file field to attach the media to"
+            send("DOM.setFileInputFiles", {"files": paths, "objectId": oid})
+            n = ((send("Runtime.callFunctionOn", {"objectId": oid, "functionDeclaration": "function () { return this.files ? this.files.length : 0; }",
+                                                   "returnByValue": True}) or {}).get("result") or {}).get("value")
+            return "" if n == len(paths) else f"the file field took {n} of {len(paths)} files"
+        try:
+            problem = self.cdp.session(attach, target_id=self.id)
+        except self.cdp.CdpError as exc:
+            problem = str(exc)
+        if problem is None:
+            problem = "the browser did not answer"
+        if problem:
+            raise SystemExit(f"{problem}; nothing was posted")
 
     def close(self) -> None:
         self.cdp.call("Target.closeTarget", {"targetId": self.id})

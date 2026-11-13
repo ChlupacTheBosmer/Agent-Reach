@@ -74,9 +74,14 @@ def _send(sock: socket.socket, text: str) -> None:
     sock.sendall(head + mask + bytes(b ^ mask[i % 4] for i, b in enumerate(payload)))
 
 
-def call(method: str, params: Optional[dict] = None, *, page: bool = False,
-         target_id: Optional[str] = None) -> Optional[dict]:
-    """One browser-level CDP call; returns `result` or None if unreachable."""
+class CdpError(Exception):
+    """The browser answered a command with an error."""
+
+
+def session(fn, *, page: bool = False, target_id: Optional[str] = None):
+    """Run fn(send) over ONE connection to the target, so objects found by one command stay valid for the next
+    (a remote object id belongs to the connection that made it). send(method, params) returns the result or
+    raises CdpError. Returns fn's value, or None if the browser is unreachable."""
     target = (next((t for t in (_json("/json/list") or []) if
                     (t.get("id") == target_id if target_id else t.get("type") == "page")), {})
               if page or target_id else (_json("/json/version") or {}))
@@ -86,34 +91,52 @@ def call(method: str, params: Optional[dict] = None, *, page: bool = False,
     u = urlparse(ws)
     host, port = u.hostname or "127.0.0.1", u.port or 80
     try:
-        with socket.create_connection((host, port), timeout=_TIMEOUT) as sock:
-            sock.settimeout(_TIMEOUT)
-            key = base64.b64encode(os.urandom(16)).decode()
-            sock.sendall(
-                (f"GET {u.path or '/'} HTTP/1.1\r\nHost: {host}:{port}\r\nUpgrade: websocket\r\n"
-                 f"Connection: Upgrade\r\nSec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n").encode()
-            )
-            resp = b""
-            while b"\r\n\r\n" not in resp:
-                chunk = sock.recv(4096)
-                if not chunk:
-                    return None
-                resp += chunk
-            head, _, buf = resp.partition(b"\r\n\r\n")
-            accept = base64.b64encode(hashlib.sha1((key + _GUID).encode()).digest()).decode()
-            if head.split(b"\r\n", 1)[0].split()[1:2] != [b"101"] or accept not in head.decode("latin-1"):
+        sock = socket.create_connection((host, port), timeout=_TIMEOUT)
+    except OSError:
+        return None
+    with sock:
+        sock.settimeout(_TIMEOUT)
+        key = base64.b64encode(os.urandom(16)).decode()
+        sock.sendall(
+            (f"GET {u.path or '/'} HTTP/1.1\r\nHost: {host}:{port}\r\nUpgrade: websocket\r\n"
+             f"Connection: Upgrade\r\nSec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n").encode()
+        )
+        resp = b""
+        while b"\r\n\r\n" not in resp:
+            chunk = sock.recv(4096)
+            if not chunk:
                 return None
-            _send(sock, json.dumps({"id": 1, "method": method, "params": params or {}}))
-            for _ in range(32):
-                payload, buf = _read_frame(sock, buf)
+            resp += chunk
+        head, _, rest = resp.partition(b"\r\n\r\n")
+        accept = base64.b64encode(hashlib.sha1((key + _GUID).encode()).digest()).decode()
+        if head.split(b"\r\n", 1)[0].split()[1:2] != [b"101"] or accept not in head.decode("latin-1"):
+            return None
+        state = {"buf": rest, "id": 0}
+
+        def send(method: str, params: Optional[dict] = None):
+            state["id"] += 1
+            _send(sock, json.dumps({"id": state["id"], "method": method, "params": params or {}}))
+            for _ in range(64):
+                payload, state["buf"] = _read_frame(sock, state["buf"])
                 if payload is None:
-                    return None
+                    raise CdpError(f"{method}: the connection closed")
                 msg = json.loads(payload.decode("utf-8"))
-                if msg.get("id") == 1:
+                if msg.get("id") == state["id"]:
+                    if "error" in msg:
+                        raise CdpError(f"{method}: {(msg['error'] or {}).get('message', msg['error'])}")
                     return msg.get("result")
+            raise CdpError(f"{method}: no answer")
+
+        return fn(send)
+
+
+def call(method: str, params: Optional[dict] = None, *, page: bool = False,
+         target_id: Optional[str] = None) -> Optional[dict]:
+    """One browser-level CDP call; returns `result` or None if unreachable (or on an error)."""
+    try:
+        return session(lambda send: send(method, params), page=page, target_id=target_id)
     except Exception:  # noqa: BLE001
         return None
-    return None
 
 
 def domain_matches(cookie_domain: str, domain: str) -> bool:
