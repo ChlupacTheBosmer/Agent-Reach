@@ -82,7 +82,9 @@ def _probe(proxy: str) -> dict:
 #: ponytail: keyword heuristic; a real IP-type service if it lets one through
 HOSTING = ("hosting", "host", "datacamp", "data center", "datacenter", "data centre", "leaseweb", "server", "cloud",
            "ovh", "hetzner", "digitalocean", "amazon", "aws", "google", "microsoft", "azure", "linode", "vultr",
-           "contabo", "m247", "choopa", "colo", "vps", "egihosting", "b2 net")
+           "contabo", "m247", "choopa", "colo", "vps", "egihosting", "b2 net",
+           # academic and research networks (the cluster itself sits on CESNET): never a household
+           "cesnet", "geant", "university", "univerzita", "research", "academ")
 
 
 def _proxy_setup(proxy: str) -> dict:

@@ -266,3 +266,9 @@ def test_data_centre_exits_are_refused_and_accounts_can_be_removed(db, monkeypat
     acc = core.create_account(db, {"network": "twitter", "label": "Home", "owner": "V4AIR", "proxy": "http://u:p@h:1"}, "petr")
     assert core.delete_account(db, acc["id"], "petr") == {"ok": True}
     assert not db.execute("SELECT 1 FROM accounts WHERE id=?", (acc["id"],)).fetchone()
+
+
+def test_the_clusters_own_network_is_never_a_household(db, monkeypatch):
+    monkeypatch.setattr(core, "_probe", lambda p: {"country": "CZ", "timezone": "Europe/Prague", "org": "AS2852 CESNET z.s.p.o."})
+    with pytest.raises(core.Refused, match="data centre"):
+        core.create_account(db, {"network": "twitter", "label": "Leak", "owner": "V4AIR", "proxy": "http://127.0.0.1:1055"}, "petr")
