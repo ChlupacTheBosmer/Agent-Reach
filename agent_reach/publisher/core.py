@@ -70,7 +70,14 @@ def _probe(proxy: str) -> dict:
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
     with opener.open(urllib.request.Request("https://ipinfo.io/json", headers={"User-Agent": "curl/8"}), timeout=25) as r:
         info = json.loads(r.read())
-    return {"country": info.get("country", ""), "timezone": info.get("timezone", "")}
+    return {"country": info.get("country", ""), "timezone": info.get("timezone", ""), "org": info.get("org", "")}
+
+
+#: words in the exit network's name that mean a data centre, not a household.
+#: ponytail: keyword heuristic; a real IP-type service if it lets one through
+HOSTING = ("hosting", "host", "datacamp", "data center", "datacenter", "data centre", "leaseweb", "server", "cloud",
+           "ovh", "hetzner", "digitalocean", "amazon", "aws", "google", "microsoft", "azure", "linode", "vultr",
+           "contabo", "m247", "choopa", "colo", "vps", "egihosting", "b2 net")
 
 
 def _proxy_setup(proxy: str) -> dict:
@@ -80,6 +87,9 @@ def _proxy_setup(proxy: str) -> dict:
     except Exception as exc:  # noqa: BLE001 - any failure means: not usable
         raise Refused(f"the proxy {masked(proxy)} does not work ({type(exc).__name__}: {str(exc)[:80]})") from None
     allowed = [c.strip().upper() for c in os.environ.get("PUBLISHER_PROXY_COUNTRIES", "").split(",") if c.strip()]
+    org = (info.get("org") or "").lower()
+    if any(w in org for w in HOSTING):
+        raise Refused(f"the proxy {masked(proxy)} exits from a data centre ({info.get('org')}), not a household")
     if allowed and info["country"] not in allowed:
         raise Refused(f"the proxy {masked(proxy)} exits in {info['country'] or 'an unknown country'}, "
                       f"not in {', '.join(allowed)}")
@@ -152,6 +162,23 @@ def create_account(db, body: dict, actor: str) -> dict:
         in_home(acc["id"], "configure", {k: v for k, v in setup.items() if k != "country"})
     store.log(db, actor, "account.create", {**public(acc), "proxy_country": setup.get("country", "")})
     return public(acc)
+
+
+def delete_account(db, account_id: str, actor: str) -> dict:
+    """Remove an account and its home (browser profile, cookies, settings). Its proxy address becomes free again."""
+    import shutil
+    account(db, account_id)
+    if db.execute("SELECT 1 FROM posts WHERE account=? AND status IN ('queued','running')", (account_id,)).fetchone():
+        raise Refused("the account has queued posts; cancel them first")
+    with _browser_lock:
+        holding = _browser["account"] == account_id
+    if holding:
+        _run_job(account_id, "close", {}, 120)
+        _release(account_id)
+    db.execute("DELETE FROM accounts WHERE id=?", (account_id,))
+    shutil.rmtree(home(account_id), ignore_errors=True)
+    store.log(db, actor, "account.delete", {"account": account_id})
+    return {"ok": True}
 
 
 def account(db, account_id: str) -> dict:

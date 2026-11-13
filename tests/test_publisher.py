@@ -256,3 +256,13 @@ def test_browser_accounts_take_turns_and_the_view_stays_on_its_site(db, monkeypa
     core._claim(b["id"], 60, wait=0)  # free again
     core._release(b["id"])
     assert "secret" not in json.dumps(store.rows(db.execute("SELECT * FROM log")))
+
+
+def test_data_centre_exits_are_refused_and_accounts_can_be_removed(db, monkeypatch):
+    monkeypatch.setattr(core, "_probe", lambda p: {"country": "DE", "timezone": "Europe/Berlin", "org": "AS212238 Datacamp Limited"})
+    with pytest.raises(core.Refused, match="data centre"):
+        core.create_account(db, {"network": "twitter", "label": "DC", "owner": "V4AIR", "proxy": "http://u:p@h:1"}, "petr")
+    monkeypatch.setattr(core, "_probe", lambda p: {"country": "CZ", "timezone": "Europe/Prague", "org": "AS5610 O2 Czech Republic"})
+    acc = core.create_account(db, {"network": "twitter", "label": "Home", "owner": "V4AIR", "proxy": "http://u:p@h:1"}, "petr")
+    assert core.delete_account(db, acc["id"], "petr") == {"ok": True}
+    assert not db.execute("SELECT 1 FROM accounts WHERE id=?", (acc["id"],)).fetchone()

@@ -42,6 +42,7 @@ ROUTES = [
     ("POST", r"/v1/accounts", lambda db, b, a, m: core.create_account(db, b, a)),
     ("PUT", r"/v1/accounts/([\w-]+)/credentials", lambda db, b, a, m: core.set_credentials(db, m[1], b, a)),
     ("POST", r"/v1/accounts/([\w-]+)/check", lambda db, b, a, m: core.check_account(db, m[1], a)),
+    ("POST", r"/v1/accounts/([\w-]+)/delete", lambda db, b, a, m: core.delete_account(db, m[1], a)),
     ("POST", r"/v1/accounts/([\w-]+)/groups", lambda db, b, a, m: core.groups(db, m[1], a)),
     ("POST", r"/v1/accounts/([\w-]+)/view/start", lambda db, b, a, m: core.view_start(db, m[1], a)),
     ("GET", r"/v1/accounts/([\w-]+)/view/frame", lambda db, b, a, m: core.view_frame(db, m[1])),
