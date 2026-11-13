@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 import time
@@ -49,12 +50,28 @@ def setup_home() -> None:
                          (ar / "browser" / "extension", shared / "extension")):
         if not link.exists() and target.exists():
             link.symlink_to(target)
+    _drop_stale_profile_lock(ar / "browser" / "profile")
     exe = next(iter(sorted((shared / "cloak-binaries").glob("chromium-*/chrome"))
                     + sorted((shared / "cloak-binaries").glob("chromium-*/Chromium.app/Contents/MacOS/Chromium"))), None)
     from agent_reach.runtime import browser
     if exe and browser._load_state().get("executable") != str(exe):
         browser.update_state(backend="cloakbrowser", profile_backend="cloakbrowser", executable=str(exe),
                              launcher_python=str(shared / "tools" / "cloakbrowser" / "venv" / "bin" / "python"))
+
+
+def _drop_stale_profile_lock(profile: Path) -> None:
+    """Chromium's SingletonLock names "<host>-<pid>". A pod restart leaves one naming the old pod, and Chromium then
+    refuses the profile ("in use on another computer"). Only one browser runs per pod, so a lock from another host is stale."""
+    import socket
+    lock = profile / "SingletonLock"
+    try:
+        owner = os.readlink(lock)
+    except OSError:
+        return
+    if owner.rsplit("-", 1)[0] != socket.gethostname():
+        for name in ("SingletonLock", "SingletonSocket", "SingletonCookie"):
+            with contextlib.suppress(OSError):
+                (profile / name).unlink()
 
 
 VIEW_SIZE = (1280, 880)

@@ -136,3 +136,16 @@ def test_instagram_page_parsers():
     m = ig_post_meta('9 likes, 0 comments - ptrchlp dne September 23, 2024: "Romania 2024.". ')
     assert (m["likes"], m["comments"], m["caption"]) == (9, 0, "Romania 2024.")
     assert ig_post_meta('3 comments - ptrchlp on May 1, 2026: "Hi"')["likes"] is None
+
+
+def test_stale_profile_lock_from_another_pod_is_dropped(tmp_path):
+    import os
+    import socket
+    from agent_reach.publisher.job import _drop_stale_profile_lock
+    os.symlink("old-pod-123", tmp_path / "SingletonLock")
+    os.symlink("x", tmp_path / "SingletonSocket")
+    _drop_stale_profile_lock(tmp_path)
+    assert not os.path.lexists(tmp_path / "SingletonLock") and not os.path.lexists(tmp_path / "SingletonSocket")
+    os.symlink(f"{socket.gethostname()}-1", tmp_path / "SingletonLock")
+    _drop_stale_profile_lock(tmp_path)
+    assert os.path.lexists(tmp_path / "SingletonLock")  # this pod's own lock stays
