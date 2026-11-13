@@ -17,7 +17,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import core, store
+from . import core, insights, store
 
 MAX_SKEW = 300
 MAX_BODY = 1_000_000
@@ -48,6 +48,19 @@ ROUTES = [
     ("GET", r"/v1/accounts/([\w-]+)/view/frame", lambda db, b, a, m: core.view_frame(db, m[1])),
     ("POST", r"/v1/accounts/([\w-]+)/view/input", lambda db, b, a, m: core.view_input(db, m[1], b)),
     ("POST", r"/v1/accounts/([\w-]+)/view/stop", lambda db, b, a, m: core.view_stop(db, m[1], a)),
+    ("POST", r"/v1/accounts/([\w-]+)/collect", lambda db, b, a, m: insights.collect_account(db, m[1], a, manual=True)),
+    ("GET", r"/v1/collect", lambda db, b, a, m: insights.collect_status(db)),
+    ("POST", r"/v1/inbox/query", lambda db, b, a, m: insights.inbox_query(db, b)),
+    ("POST", r"/v1/inbox/status", lambda db, b, a, m: insights.inbox_update(db, b.get("id", ""), b, a)),
+    ("POST", r"/v1/metrics", lambda db, b, a, m: insights.metrics(db, b)),
+    ("POST", r"/v1/metrics/csv", lambda db, b, a, m: insights.metrics_csv(db, b)),
+    ("GET", r"/v1/drafts", lambda db, b, a, m: insights.drafts(db)),
+    ("POST", r"/v1/drafts", lambda db, b, a, m: insights.save_draft(db, b, a)),
+    ("POST", r"/v1/drafts/(\d+)/delete", lambda db, b, a, m: insights.delete_draft(db, int(m[1]))),
+    ("GET", r"/v1/replies", lambda db, b, a, m: insights.replies(db)),
+    ("POST", r"/v1/replies", lambda db, b, a, m: insights.save_reply(db, b, a)),
+    ("POST", r"/v1/replies/(\d+)/delete", lambda db, b, a, m: insights.delete_reply(db, int(m[1]))),
+    ("POST", r"/v1/posts/query", lambda db, b, a, m: insights.posts_query(db, b)),
     ("POST", r"/v1/preview", lambda db, b, a, m: core.preview(db, b)),
     ("POST", r"/v1/posts", lambda db, b, a, m: core.enqueue(db, b, a)),
     ("GET", r"/v1/posts/(\d+)", lambda db, b, a, m: core.get_post(db, int(m[1]))),
@@ -119,6 +132,7 @@ def scheduler(stop: threading.Event, every: float = 10.0) -> None:
             try:
                 while core.run_due(db):
                     pass
+                insights.collect_due(db)  # one account per round, after publishing
             finally:
                 db.close()
         except Exception as exc:  # noqa: BLE001 - keep the queue alive, report the problem

@@ -17,24 +17,29 @@ from . import store
 #: What each network can do through the publisher. `target`: own = the account itself, else what the user picks.
 NETWORKS = {
     "bluesky": {"route": "api", "kinds": {
-        "bluesky-post": {"text": 300, "images": 4, "target": "own"},
+        "bluesky-post": {"text": 300, "images": 4, "target": "own", "options": ["first_comment"]},
         "bluesky-reply": {"text": 300, "images": 4, "target": "post"},
         "bluesky-message": {"text": 1000, "images": 0, "target": "person"}}},
     "twitter": {"route": "browser", "kinds": {
-        "twitter-post": {"text": 280, "images": 4, "target": "own"},
+        "twitter-post": {"text": 280, "images": 4, "target": "own", "options": ["first_comment"]},
         "twitter-reply": {"text": 280, "images": 1, "target": "post"}}},
     "facebook": {"route": "browser", "kinds": {
-        "facebook-group-post": {"text": 5000, "images": 0, "target": "group"},
+        "facebook-group-post": {"text": 5000, "images": 10, "target": "group", "media": "image"},
+        "facebook-comment-reply": {"text": 2000, "images": 0, "target": "comment"},
         "facebook-message": {"text": 2000, "images": 0, "target": "person"}}},
     "facebookpage": {"route": "browser", "kinds": {
-        "facebook-page-post": {"text": 5000, "images": 10, "target": "own", "media": "image"}}},
+        "facebook-page-post": {"text": 5000, "images": 10, "target": "own", "media": "image"},
+        "facebook-comment-reply": {"text": 2000, "images": 0, "target": "comment"}}},
     "instagram": {"route": "browser", "kinds": {
         "instagram-post": {"text": 2200, "images": 10, "min_media": 1, "target": "own", "media": "image or video"},
-        "instagram-reel": {"text": 2200, "images": 1, "min_media": 1, "target": "own", "media": "video"}}},
+        "instagram-reel": {"text": 2200, "images": 1, "min_media": 1, "target": "own", "media": "video"},
+        "instagram-comment-reply": {"text": 2200, "images": 0, "target": "comment"}}},
     "linkedinpage": {"route": "browser", "kinds": {
-        "linkedin-page-post": {"text": 3000, "images": 9, "target": "own", "media": "image"}}},
+        "linkedin-page-post": {"text": 3000, "images": 9, "target": "own", "media": "image"},
+        "linkedin-comment-reply": {"text": 1250, "images": 0, "target": "comment"}}},
     "linkedin": {"route": "browser", "kinds": {
         "linkedin-post": {"text": 3000, "images": 9, "target": "own", "media": "image"},
+        "linkedin-comment-reply": {"text": 1250, "images": 0, "target": "comment"},
         "linkedin-message": {"text": 2000, "images": 0, "target": "thread"},
         "linkedin-connect": {"text": 300, "images": 0, "target": "person"}}},
 }
@@ -264,8 +269,12 @@ def normalize(db, body: dict) -> dict:
         target, expected = (body.get("target") or "").strip(), (body.get("expected_name") or "").strip()
         if not target or not expected:
             raise Refused(f"{kind} needs a target ({spec['target']}) and the exact name the page shows")
+    allowed = set(spec.get("options", []))
+    options = {k: str(v).strip() for k, v in (body.get("options") or {}).items() if k in allowed and str(v).strip()}
+    if options.get("first_comment") and len(options["first_comment"]) > spec["text"]:
+        raise Refused(f"the first comment is longer than {spec['text']} characters")
     post = {"account": acc["id"], "kind": kind, "target": target, "expected_name": expected, "text": text,
-            "media": media, "options": {}}
+            "media": media, "options": options}
     from agent_reach import outbox
     outbox.validate({**post, "status": "", "created": "", "result": ""})
     return post
@@ -298,8 +307,12 @@ def enqueue(db, body: dict, actor: str) -> dict:
     if body.get("at"):
         import datetime as dt
         due = dt.datetime.fromisoformat(str(body["at"]).replace("Z", "+00:00")).timestamp()
-    cur = db.execute("INSERT INTO posts(account, payload, hash, author, due, created) VALUES (?,?,?,?,?,?)",
-                     (acc["id"], json.dumps(post, ensure_ascii=False), digest(post), author, due, time.time()))
+    # app metadata, outside the confirmed content: tags, the group of per-network variants, the inbox item answered
+    meta = {"tags": [str(t).strip()[:40] for t in (body.get("tags") or []) if str(t).strip()][:10],
+            "group": str(body.get("group") or "")[:40], "inbox": str(body.get("inbox") or "")[:200]}
+    cur = db.execute("INSERT INTO posts(account, payload, hash, author, due, created, meta) VALUES (?,?,?,?,?,?,?)",
+                     (acc["id"], json.dumps(post, ensure_ascii=False), digest(post), author, due, time.time(),
+                      json.dumps(meta, ensure_ascii=False)))
     store.log(db, actor, "post.queue", {"id": cur.lastrowid, "author": author, "account": acc["id"], "kind": post["kind"],
                                         "hash": digest(post), "due": due})
     return get_post(db, cur.lastrowid)
@@ -398,6 +411,9 @@ def run_due(db, now=None) -> dict | None:
     db.execute("UPDATE posts SET status=?, result=?, finished=? WHERE id=?",
                (status, out.get("result") or out.get("error") or "", time.time(), row["id"]))
     store.log(db, "publisher", f"post.{status}", {"id": row["id"], **out})
+    if status == "sent":
+        from . import insights
+        insights.mark_sent(db, get_post(db, row["id"]), str(out.get("result") or ""))
     return get_post(db, row["id"])
 
 

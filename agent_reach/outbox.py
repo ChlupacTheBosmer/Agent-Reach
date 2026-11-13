@@ -36,7 +36,8 @@ from pathlib import Path
 KINDS = ("facebook-group-post", "facebook-page-post", "facebook-message", "linkedin-post", "linkedin-page-post",
          "linkedin-message", "linkedin-connect",
          "twitter-post", "twitter-reply", "bluesky-post", "bluesky-reply", "bluesky-message",
-         "instagram-post", "instagram-reel")
+         "instagram-post", "instagram-reel",
+         "facebook-comment-reply", "instagram-comment-reply", "linkedin-comment-reply")
 HOSTS = {"facebook": "facebook.com", "linkedin": "linkedin.com", "twitter": "x.com", "bluesky": "bsky.app",
          "instagram": "instagram.com"}
 FIELDS = ("kind", "target", "expected_name", "status", "created", "result")
@@ -649,8 +650,60 @@ def linkedin_post(d: dict, send: bool) -> str:
         tab.close()
 
 
+# ── replies to comments (inbox): Facebook, Instagram, LinkedIn, in the account's browser ──
+
+#: the comment block that shows the commenter's name, its own Reply link, and the text box that opens under it
+REPLY_LINK = r"""((name) => {
+  const blocks = [...document.querySelectorAll('[role=article], li, article, .comments-comment-item, .comments-comment-entity')]
+    .filter(b => (b.innerText || '').toLowerCase().includes(name.toLowerCase()));
+  blocks.sort((a, b) => a.innerText.length - b.innerText.length);  // the innermost block = that comment
+  for (const b of blocks) {
+    const r = [...b.querySelectorAll('[role=button], button, span[role=button]')].find(x => /^(odpovědět|reply|odpověď)$/i.test((x.innerText || x.getAttribute('aria-label') || '').trim()));
+    if (r) return r;
+  }
+  return null;
+})"""
+FOCUSED_BOX = r"""(() => { const a = document.activeElement; return a && (a.isContentEditable || a.tagName === 'TEXTAREA') ? a : null; })()"""
+SUBMIT = {"instagram": r"""[...document.querySelectorAll('[role=button], button')].find(b => /^(zveřejnit|post|odeslat)$/i.test((b.innerText || '').trim()) && !b.disabled)""",
+          "linkedin": r"""(() => { const a = document.activeElement; const f = a && a.closest('form'); return f && [...f.querySelectorAll('button')].find(b => /^(odpovědět|reply|zveřejnit|post)$/i.test((b.innerText || '').trim()) && !b.disabled); })()"""}
+
+
+def comment_reply(d: dict, send: bool) -> str:
+    site = d["kind"].split("-")[0]
+    name = _norm(d["expected_name"])
+    tab = Tab(d["target"], site)
+    try:
+        tab.wait("document.readyState === 'complete'", 30)
+        time.sleep(4)
+        link = f"({REPLY_LINK})({json.dumps(name)})"
+        if not tab.wait(link, 20):
+            raise SystemExit(f"no comment by {name!r} with a Reply button on that page; nothing was posted")
+        tab.click(link)
+        if not tab.wait(FOCUSED_BOX, 15):
+            raise SystemExit("the reply box did not open; nothing was posted")
+        tab.type_lines(d["text"], newline_shift=True)
+        time.sleep(1.5)
+        typed = tab.js(f"(() => {{ const x = {FOCUSED_BOX}; return x ? (x.innerText || x.value || '') : ''; }})()") or ""
+        if _norm(d["text"])[:200] not in _norm(typed):
+            raise SystemExit("the reply box does not contain the approved text; nothing was posted")
+        if not send:
+            tab.js(f"(() => {{ const x = {FOCUSED_BOX}; if (x) {{ if (x.isContentEditable) x.innerText = ''; else x.value = ''; }} return true; }})()")
+            return f"check ok: comment by {name} found, reply box opened, text typed; cleared, nothing posted"
+        if site == "facebook":
+            tab.key("Enter")  # Facebook sends a comment reply with Enter (new lines were Shift+Enter)
+        elif not tab.click(SUBMIT[site]):
+            raise SystemExit("no enabled Post/Reply button next to the reply box; nothing was posted")
+        time.sleep(4)
+        if tab.js(f"(() => {{ const x = {FOCUSED_BOX}; return !!x && (x.innerText || x.value || '').trim().length > 0; }})()"):
+            raise unknown("the reply text is still in the box after sending")
+        return "posted"
+    finally:
+        tab.close()
+
+
 SENDERS = {"facebook-group-post": facebook_group_post, "linkedin-post": linkedin_post, "linkedin-page-post": linkedin_post, "facebook-page-post": facebook_group_post,
            "instagram-post": instagram, "instagram-reel": instagram,
+           "facebook-comment-reply": comment_reply, "instagram-comment-reply": comment_reply, "linkedin-comment-reply": comment_reply,
            "facebook-message": facebook_message,
            "linkedin-message": linkedin, "linkedin-connect": linkedin,
            "twitter-post": twitter, "twitter-reply": twitter,

@@ -158,6 +158,30 @@ def groups(_payload: dict) -> dict:
                                    if r.get("url", "").startswith("https://www.facebook.com/groups/")]}
 
 
+def collect(payload: dict) -> dict:
+    from . import collect as c
+    return c.run(payload)
+
+
+def _first_comment(post: dict, result: str) -> str:
+    """Bluesky / X: the first comment is a reply to our own post, sent right after it."""
+    from agent_reach import outbox
+    url = result.split("posted: ", 1)[1].split()[0] if "posted: " in result else ""
+    if post["kind"] == "twitter-post":
+        import re
+        m = re.search(r"https://(?:x|twitter)\.com/[^\s\"']+/status/\d+", result)
+        url = m.group(0) if m else ""
+    if not url.startswith("https://"):
+        return " (first comment not sent: the post's link is unknown)"
+    kind = "bluesky-reply" if post["kind"] == "bluesky-post" else "twitter-reply"
+    d = {"kind": kind, "target": url, "expected_name": post["expected_name"], "text": post["options"]["first_comment"],
+         "media": [], "status": "approved", "created": "", "result": ""}
+    try:
+        return " + first comment " + outbox.SENDERS[kind](d, True)
+    except SystemExit as exc:
+        return f" (first comment failed: {exc})"
+
+
 def publish(payload: dict) -> dict:
     from agent_reach import outbox
     from agent_reach.runtime import pacing
@@ -175,15 +199,18 @@ def publish(payload: dict) -> dict:
     with tempfile.TemporaryDirectory(dir=str(Path.home())) as tmp:
         d["media"] = _download(post.get("media") or [], Path(tmp))
         pacing.before(site)  # this account's write budget: a few a day, never a burst
-        return {"ok": True, "result": outbox.SENDERS[post["kind"]](d, True)}
+        result = outbox.SENDERS[post["kind"]](d, True)
+        if (post.get("options") or {}).get("first_comment") and post["kind"] in ("bluesky-post", "twitter-post"):
+            result += _first_comment(post, result)
+        return {"ok": True, "result": result}
 
 
 def main() -> int:
     command = sys.argv[1] if len(sys.argv) > 1 else ""
     payload = json.loads(sys.stdin.read() or "{}")
     step = {"configure": configure, "check": check, "publish": publish, "groups": groups,
-            "open": open_view, "close": close_browser}.get(command)
-    browser_step = network() not in ("bluesky", "") and command in ("check", "publish", "groups")
+            "open": open_view, "close": close_browser, "collect": collect}.get(command)
+    browser_step = network() not in ("bluesky", "") and command in ("check", "publish", "groups", "collect")
     try:
         if network() not in ("bluesky", ""):
             setup_home()
