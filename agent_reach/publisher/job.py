@@ -11,7 +11,7 @@ import tempfile
 import urllib.request
 from pathlib import Path
 
-CONFIG_KEYS = ("proxy", "browser_locale", "browser_timezone", "bluesky_handle", "bluesky_app_password")
+CONFIG_KEYS = ("proxy", "browser_locale", "browser_timezone", "browser_platform", "bluesky_handle", "bluesky_app_password")
 MAX_MEDIA = 25 * 1024 * 1024  # the app's media store keeps at most 25 MB per file
 
 

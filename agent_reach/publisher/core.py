@@ -152,13 +152,18 @@ def create_account(db, body: dict, actor: str) -> dict:
     route = NETWORKS[network]["route"]
     proxy = (body.get("proxy") or "").strip()
     setup = {}
+    platform = body.get("browser_platform")
+    if platform not in (None, "", "macos", "windows"):
+        raise Refused("browser_platform is macos or windows")
     if route == "browser":
         if proxy:
             _check_proxy(proxy)
             setup = _proxy_setup(proxy)
         else:
             setup = _pool_proxy(db)
-        proxy = setup["proxy"]  # browser accounts never go out from the server's own address
+        proxy = setup["proxy"]
+        if platform:
+            setup["browser_platform"] = platform  # browser accounts never go out from the server's own address
     acc = {"id": f"{network}-{slug(label)}", "network": network, "label": label, "owner": owner, "route": route,
            "handle": (body.get("handle") or "").strip().lstrip("@"), "proxy": proxy,
            "status": "needs-login" if route == "browser" else "needs-credentials", "created": time.time()}

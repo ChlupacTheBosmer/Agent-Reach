@@ -497,6 +497,7 @@ def _launch(url: str, *, headless: bool = True) -> None:
                  "REACH_BROWSER_PROXY": str(Config(read_only=True).get("proxy") or ""),
                  "REACH_BROWSER_LOCALE": str(Config(read_only=True).get("browser_locale") or ""),
                  "REACH_BROWSER_TIMEZONE": str(Config(read_only=True).get("browser_timezone") or ""),
+                 "REACH_BROWSER_PLATFORM": str(Config(read_only=True).get("browser_platform") or ""),
                  "REACH_BROWSER_PORT": str(CDP_PORT),
                  "CLOAKBROWSER_CACHE_DIR": str(browser_root().parent / "cloak-binaries")}, **_detach_kwargs(),
         )

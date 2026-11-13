@@ -272,3 +272,11 @@ def test_the_clusters_own_network_is_never_a_household(db, monkeypatch):
     monkeypatch.setattr(core, "_probe", lambda p: {"country": "CZ", "timezone": "Europe/Prague", "org": "AS2852 CESNET z.s.p.o."})
     with pytest.raises(core.Refused, match="data centre"):
         core.create_account(db, {"network": "twitter", "label": "Leak", "owner": "V4AIR", "proxy": "http://127.0.0.1:1055"}, "petr")
+
+
+def test_an_account_brought_over_from_a_mac_presents_as_a_mac(db, home_calls):
+    core.create_account(db, {"network": "linkedin", "label": "Petr Chlup", "owner": "Petr", "handle": "petr", "proxy": "http://127.0.0.1:1055",
+                             "browser_platform": "macos"}, "petr")
+    assert home_calls[-1][2]["browser_platform"] == "macos"
+    with pytest.raises(core.Refused, match="macos or windows"):
+        core.create_account(db, {"network": "twitter", "label": "X", "owner": "Petr", "proxy": "http://127.0.0.1:1055", "browser_platform": "linux"}, "petr")

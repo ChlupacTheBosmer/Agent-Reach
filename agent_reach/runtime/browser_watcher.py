@@ -90,7 +90,9 @@ def _launch_cloak(url: str, *, headless: bool = True):
     ctx = launch_persistent_context(
         str(browser.profile_dir()), headless=headless,
         locale=os.environ.get("REACH_BROWSER_LOCALE") or None, timezone=os.environ.get("REACH_BROWSER_TIMEZONE") or None,
-        args=["--remote-debugging-address=127.0.0.1", f"--remote-debugging-port={browser.CDP_PORT}"],
+        args=["--remote-debugging-address=127.0.0.1", f"--remote-debugging-port={browser.CDP_PORT}"]
+             # fork: which computer the browser presents itself as (an account brought over from a Mac stays a Mac)
+             + ([f"--fingerprint-platform={os.environ['REACH_BROWSER_PLATFORM']}"] if os.environ.get("REACH_BROWSER_PLATFORM") in ("macos", "windows") else []),
         extension_paths=[str(browser.extension_dir())],
         proxy=proxy_options,
     )
