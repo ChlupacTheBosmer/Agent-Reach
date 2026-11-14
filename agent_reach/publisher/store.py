@@ -46,7 +46,9 @@ CREATE TABLE IF NOT EXISTS collect_state (
 #: columns added after the first release: (table, column, definition)
 MIGRATIONS = [("posts", "meta", "TEXT NOT NULL DEFAULT '{}'"), ("posts", "url", "TEXT NOT NULL DEFAULT ''"),
               ("inbox", "mine", "INTEGER NOT NULL DEFAULT 0"),  # mine: written by the account itself
-              ("inbox", "parent_id", "TEXT NOT NULL DEFAULT ''")]  # the inbox item this one answers ('' = the post)
+              ("inbox", "parent_id", "TEXT NOT NULL DEFAULT ''"),  # the inbox item this one answers ('' = the post)
+              ("inbox", "ctx_author", "TEXT NOT NULL DEFAULT ''"),  # who wrote the post (when it is not ours, e.g. a wall post)
+              ("inbox", "ctx_text", "TEXT NOT NULL DEFAULT ''")]  # the post's text, when own_posts does not have it
 
 
 def data_dir() -> Path:

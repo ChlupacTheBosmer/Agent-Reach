@@ -119,10 +119,12 @@ def _save(db, acc: dict, res: dict, now: float) -> int:
                           it.get("author_handle", ""), it.get("author_name", ""), it.get("text", ""), int(bool(it.get("question")) and not mine),
                           it.get("created_at"), now, int(mine), "done" if mine else "new", it.get("parent_id") or ""))
         new += cur.rowcount
-        if not cur.rowcount:  # seen before: fill in what an older read did not know (time, parent, post), never the status
-            db.execute("UPDATE inbox SET created_at=COALESCE(created_at, ?), parent_id=CASE WHEN parent_id='' THEN ? ELSE parent_id END, "
-                       "post_url=CASE WHEN post_url='' THEN ? ELSE post_url END WHERE id=?",
-                       (it.get("created_at"), it.get("parent_id") or "", it.get("post_url", ""), it["id"]))
+        # time, parent and post context: kept for a new item, filled in for an older one (its status never changes)
+        db.execute("UPDATE inbox SET created_at=COALESCE(created_at, ?), parent_id=CASE WHEN parent_id='' THEN ? ELSE parent_id END, "
+                   "post_url=CASE WHEN post_url='' THEN ? ELSE post_url END, ctx_author=CASE WHEN ? != '' THEN ? ELSE ctx_author END, "
+                   "ctx_text=CASE WHEN ? != '' THEN ? ELSE ctx_text END WHERE id=?",
+                   (it.get("created_at"), it.get("parent_id") or "", it.get("post_url", ""), it.get("post_author") or "", it.get("post_author") or "",
+                    it.get("post_text") or "", it.get("post_text") or "", it["id"]))
     keys = ("likes", "reposts", "replies", "quotes", "views", "impressions", "saves")
     for p in res.get("posts", []):
         if not p.get("url"):
@@ -195,7 +197,8 @@ def mark_sent(db, post: dict, result: str) -> None:
 
 def inbox_query(db, f: dict) -> list:
     # with each item: the post it is on (our post: its text, author = the account) and the comment it answers, if known
-    sql, args = ["SELECT i.*, a.label AS account_label, COALESCE(o.text, '') AS post_text, COALESCE(p.author_name, '') AS parent_author, "
+    sql, args = ["SELECT i.*, a.label AS account_label, COALESCE(NULLIF(o.text, ''), i.ctx_text) AS post_text, "
+                 "CASE WHEN i.ctx_author != '' THEN i.ctx_author ELSE a.label END AS post_author, COALESCE(p.author_name, '') AS parent_author, "
                  "COALESCE(p.text, '') AS parent_text FROM inbox i JOIN accounts a ON a.id=i.account "
                  "LEFT JOIN own_posts o ON o.url=i.post_url LEFT JOIN inbox p ON p.id=i.parent_id WHERE 1=1"], []
     for key in ("id", "network", "account", "status", "type"):

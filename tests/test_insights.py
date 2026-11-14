@@ -218,3 +218,9 @@ def test_inbox_items_carry_their_post_and_parent(tmp_path, monkeypatch):
     r = {x["id"]: x for x in insights.inbox_query(db, {})}
     assert r["fb:2"]["post_text"] == "Apply to V4AIR" and (r["fb:2"]["parent_author"], r["fb:2"]["parent_text"]) == ("Jana", "Is it free?")
     assert r["fb:1"]["created_at"] == 5.0 and r["fb:1"]["parent_text"] == ""
+
+
+def test_facebook_page_title_gives_post_author_and_text():
+    from agent_reach.publisher.collect import fb_title
+    assert fb_title("Prokop Košátko - Všechno nejlepší ! 🙂 | Facebook") == ("Prokop Košátko", "Všechno nejlepší ! 🙂")
+    assert fb_title("(3) Petr Chlup - . | Facebook") == ("Petr Chlup", ".") and fb_title("Facebook") == ("", "")

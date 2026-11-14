@@ -381,7 +381,8 @@ def linkedin(acc: dict, known: dict, page: bool = False) -> dict:
             url = p.get("url") or ""
             if not url and i < len(urns):  # the reader lists the same page in the same order
                 url = f"https://www.linkedin.com/feed/update/{urns[i]}/"
-            posts.append({"url": url, "text": p.get("body") or p.get("raw_text", ""), "created_at": _ts(p.get("posted_at")),
+            body = re.sub(r"[\u200b\s]+", " ", p.get("body") or p.get("raw_text", "")).strip()
+            posts.append({"url": url, "text": re.sub(r"(\s\d+)+$", "", body), "created_at": _ts(p.get("posted_at")),
                           "likes": _num(p.get("reactions")), "replies": _num(p.get("comments")), "reposts": _num(p.get("reposts")),
                           "quotes": None, "views": None, "impressions": _num(p.get("impressions"))})
         for p in _pick(posts, known):
@@ -470,6 +471,12 @@ _FB_END = re.compile(r"^(odpovědět|reply|to se mi líbí|like|sdílet|share|up
 _FB_TIME = re.compile(r"^(\d+\s*\S{1,6}|teď|just now|včera|yesterday)$", re.I)
 
 
+def fb_title(title: str) -> tuple:
+    """'Prokop Košátko - Všechno nejlepší ! 🙂 | Facebook' -> (author, text) of the open post page."""
+    m = re.match(r"^(?:\(\d+\)\s*)?(.+?) - (.*) \| Facebook$", (title or "").strip(), re.S)
+    return (m.group(1).strip(), m.group(2).strip()) if m else ("", "")
+
+
 def fb_post_text(lines: list, by: str) -> str:
     """The text pieces of a wall post (author, times and buttons left out), joined: enough to recognise the post."""
     keep = [x for x in lines if x != by and not _FB_TIME.match(x) and not _FB_END.match(x) and len(x) > 1
@@ -552,6 +559,9 @@ def facebook(acc: dict, known: dict, page: bool = False) -> dict:
             tab.wait("document.querySelector('[role=main]')", 30)
             time.sleep(4)
             got = tab.js(FB_COMMENTS) or []
+            author, text = fb_title(tab.js("document.title") or "")
+            if text:
+                p["text"] = text[:500]
             seen = set()
             for a in got:
                 c = fb_comment(a["label"], a["text"], a["link"] or p["url"])
@@ -560,7 +570,8 @@ def facebook(acc: dict, known: dict, page: bool = False) -> dict:
                 seen.add(c["id"])
                 inbox.append({"id": c["id"], "type": "reply" if a["label"].lower().startswith(("odpověď", "reply")) else "comment",
                               "post_url": p["url"], "item_url": c["link"], "author_handle": "", "author_name": c["who"],
-                              "text": c["text"], "created_at": c["when"], "mine": c["who"] == me, "parent_id": c["parent"]})
+                              "text": c["text"], "created_at": c["when"], "mine": c["who"] == me, "parent_id": c["parent"],
+                              "post_author": author, "post_text": text[:500]})
             p["replies"] = len(seen)
         if not page:  # our own comments, from the activity log (nothing notifies us about them)
             tab.js("location.href = 'https://www.facebook.com/me/allactivity?category_key=COMMENTSCLUSTER'")
@@ -580,6 +591,16 @@ def facebook(acc: dict, known: dict, page: bool = False) -> dict:
                 inbox.append({"id": c["id"], "type": "reply" if re.search(r"odpověděl|replied", desc, re.I) else "comment",
                               "post_url": c["post"], "item_url": c["link"], "author_handle": "", "author_name": me, "text": text,
                               "created_at": day_time(e.get("day", ""), hhmm), "mine": True, "parent_id": c["parent"]})
+            known_text = {q["url"]: q["text"] for q in posts if q.get("text")}
+            for url in [u for u in dict.fromkeys(i["post_url"] for i in inbox if i.get("mine")) if u and u not in known_text][:3]:
+                tab.js(f"location.href = {json.dumps(url)}")
+                time.sleep(2)
+                tab.wait("document.querySelector('[role=main]')", 30)
+                time.sleep(3)
+                author, text = fb_title(tab.js("document.title") or "")
+                for i in inbox:
+                    if i["post_url"] == url and text:
+                        i.update(post_author=author, post_text=text[:500])
     finally:
         tab.close()
     return {"inbox": inbox, "posts": posts, "profile": profile}
