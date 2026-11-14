@@ -434,24 +434,27 @@ def facebook(acc: dict, known: dict, page: bool = False) -> dict:
         for _ in range(3):  # the timeline loads as it scrolls, like a person looking down their own wall
             tab.js("window.scrollBy(0, 1200)")
             time.sleep(2.5)
-        posts = [{"url": p["url"], "text": "", "created_at": None, "likes": None, "replies": _num(p["comments"]), "reposts": None,
+        posts = [{"url": p["url"], "text": "", "created_at": None, "likes": None, "replies": _num(p["comments"]) or None, "reposts": None,
                   "quotes": None, "views": None, "impressions": None} for p in (tab.js(FB_POSTS) or [])]
-        for p in _pick(posts, known):
+        # the comment button often carries no count: such posts are opened too (newest first) and counted there
+        todo = _pick([p for p in posts if p["replies"]], known)
+        todo += [p for p in posts if p["replies"] is None][:max(0, MAX_DETAIL - len(todo))]
+        for p in todo:
             tab.js(f"location.href = {json.dumps(p['url'])}")
             time.sleep(2)
             tab.wait("document.querySelector('[role=main]')", 30)
             time.sleep(4)
             got = tab.js(FB_COMMENTS) or []
-            if not got:
-                _unread(p, known)
-                continue
+            seen = set()
             for a in got:
                 c = fb_comment(a["label"], a["text"], a["link"] or p["url"])
-                if not c["who"]:
-                    continue
+                if not c["who"] or c["id"] in seen or (c["text"].startswith(c["who"]) and "·" in c["text"]):
+                    continue  # the same comment rendered twice (one copy without line breaks)
+                seen.add(c["id"])
                 inbox.append({"id": c["id"], "type": "reply" if a["label"].lower().startswith(("odpověď", "reply")) else "comment",
                               "post_url": p["url"], "item_url": c["link"], "author_handle": "", "author_name": c["who"],
                               "text": c["text"], "created_at": None, "mine": c["who"] == me})
+            p["replies"] = len(seen)
     finally:
         tab.close()
     return {"inbox": inbox, "posts": posts, "profile": profile}
