@@ -392,6 +392,28 @@ FB_COMMENTS = r"""[...document.querySelectorAll('[role=article][aria-label^="Kom
   label: a.getAttribute('aria-label') || '', text: a.innerText || '',
   link: ([...a.querySelectorAll('a[href*="comment_id="]')].map(x => x.href).find(h => /\/posts\/|story_fbid|permalink|\/videos\/|\/photo/.test(h)) || '')
 })).slice(0, 60)"""
+#: the activity log's comment entries (comments the account wrote): description line, text, audience, time, link
+FB_LOG = r"""[...document.querySelectorAll('[role=main] a[href*="comment_id="]')].map(a => {
+  let e = a, i = 0; while (e && i < 8 && !/okomentoval|odpověděl|commented|replied/i.test(e.innerText || '')) { e = e.parentElement; i++; }
+  return {link: a.href, lines: e ? (e.innerText || '').split('\n').map(t => t.trim()).filter(Boolean) : []};
+}).slice(0, 40)"""
+_FB_LOG_DESC = re.compile(r"okomentoval|odpověděl|commented|replied", re.I)
+_FB_LOG_END = re.compile(r"^(přátelé|veřejné|veřejný|soukromá skupina|veřejná skupina|jen já|vlastní|friends|public|only me|custom|private group|public group|zobrazit|view|\d{1,2}:\d{2})$", re.I)
+
+
+def fb_log_entry(lines: list) -> tuple:
+    """['13. listopad 2026', 'Petr Chlup okomentoval svůj příspěvek.', '.', 'Přátelé', '23:38', 'Zobrazit'] -> (description, text)."""
+    d = next((i for i, x in enumerate(lines) if _FB_LOG_DESC.search(x)), None)
+    if d is None:
+        return "", ""
+    text = []
+    for x in lines[d + 1:]:
+        if _FB_LOG_END.match(x):
+            break
+        text.append(x)
+    return lines[d], "\\n".join(text).strip()
+
+
 _FB_WHO = re.compile(r"^(?:Komentář|Odpověď|Comment|Reply)\s+(?:od|by)\s+(.+?)(?:\s+na\s+|\s+to\s+|\s*\()", re.I)
 _FB_END = re.compile(r"^(odpovědět|reply|to se mi líbí|like|sdílet|share|upraveno|edited|přeložit|see translation|zobrazit překlad)$", re.I)
 _FB_TIME = re.compile(r"^(\d+\s*\S{1,6}|teď|just now|včera|yesterday)$", re.I)
@@ -428,12 +450,16 @@ def facebook(acc: dict, known: dict, page: bool = False) -> dict:
     rows = lambda x: x if isinstance(x, list) else (x or {}).get("data", []) if isinstance(x, dict) else []  # noqa: E731
     inbox = []
     for n in rows(opencli_call("facebook", ["notifications", "--limit", "30"], timeout=180)):
-        text = str(n.get("text", ""))
-        if not re.search(r"zmínil|označil|mentioned|tagged", text.lower()):
-            continue  # comments come from our posts below (ours included)
-        who = re.split(r"\s(?:vás zmínil|zmínil|vás označil|označil|mentioned|tagged)", text, maxsplit=1)[0]
-        inbox.append({"id": "fb:" + str(n.get("notif_id") or _id(n.get("url"), text)), "type": "mention", "post_url": "",
-                      "item_url": n.get("url", ""), "author_handle": "", "author_name": who[:80], "text": text, "created_at": None, "mine": False})
+        text, url = re.sub(r"^Nepřečteno\s*", "", str(n.get("text", ""))), str(n.get("url", ""))
+        t = text.lower()
+        mention = bool(re.search(r"zmínil|označil|mentioned|tagged", t))
+        if not (mention or re.search(r"okomentoval|komentoval|odpověděl|commented|replied", t)):
+            continue
+        who = re.split(r"\s(?:vás zmínil|zmínil|vás označil|označil|okomentoval|komentoval|odpověděl|mentioned|tagged|commented|replied)", text, maxsplit=1)[0]
+        c = fb_comment("", "", url) if "comment_id=" in url else None
+        inbox.append({"id": c["id"] if c else "fb:" + str(n.get("notif_id") or _id(url, text)), "type": "mention" if mention else "comment",
+                      "post_url": c["post"] if c else "", "item_url": c["link"] if c else url, "author_handle": "",
+                      "author_name": who[:80], "text": text, "created_at": None, "mine": False})
     me = acc.get("label", "")
     tab = outbox.Tab(f"https://www.facebook.com/{acc['handle']}" if page else "https://www.facebook.com/me", "facebook")
     profile = {}
@@ -475,6 +501,21 @@ def facebook(acc: dict, known: dict, page: bool = False) -> dict:
                               "post_url": p["url"], "item_url": c["link"], "author_handle": "", "author_name": c["who"],
                               "text": c["text"], "created_at": None, "mine": c["who"] == me})
             p["replies"] = len(seen)
+        if not page:  # our own comments, from the activity log (nothing notifies us about them)
+            tab.js("location.href = 'https://www.facebook.com/me/allactivity?category_key=COMMENTSCLUSTER'")
+            time.sleep(2)
+            tab.wait("document.querySelector('[role=main] a[href*=\"comment_id=\"]')", 30)
+            time.sleep(3)
+            slug = ((re.search(r"facebook\.com/([^/?]+)/allactivity", tab.js("location.href") or "") or [None, ""])[1]).lower()
+            for e in tab.js(FB_LOG) or []:
+                desc, text = fb_log_entry(e["lines"])
+                c = fb_comment("", "", e["link"])
+                own_post = bool(re.search(r"svůj|svou|your own", desc, re.I)) or (slug and f"facebook.com/{slug}/" in e["link"].lower())
+                if not desc or not own_post or c["id"] in {i["id"] for i in inbox}:
+                    continue
+                inbox.append({"id": c["id"], "type": "reply" if re.search(r"odpověděl|replied", desc, re.I) else "comment",
+                              "post_url": c["post"], "item_url": c["link"], "author_handle": "", "author_name": me, "text": text,
+                              "created_at": None, "mine": True})
     finally:
         tab.close()
     return {"inbox": inbox, "posts": posts, "profile": profile}

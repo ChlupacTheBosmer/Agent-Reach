@@ -196,3 +196,10 @@ def test_own_comments_arrive_done_and_can_be_hidden(tmp_path, monkeypatch):
     rows = {r["id"]: r for r in insights.inbox_query(db, {})}
     assert (rows["a"]["status"], rows["a"]["mine"], rows["b"]["status"], rows["b"]["mine"]) == ("done", 1, "new", 0)
     assert [r["id"] for r in insights.inbox_query(db, {"hide_mine": True})] == ["b"]
+
+
+def test_facebook_activity_log_entry():
+    from agent_reach.publisher.collect import fb_log_entry
+    assert fb_log_entry(["13. listopad 2026", "Petr Chlup okomentoval svůj příspěvek.", ".", "Přátelé", "23:38", "Zobrazit"]) == \
+        ("Petr Chlup okomentoval svůj příspěvek.", ".")
+    assert fb_log_entry(["Petr odpověděl(a) na komentář uživatele Jan.", "Ano", "Soukromá skupina", "23:04"])[1] == "Ano"
