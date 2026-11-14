@@ -510,7 +510,9 @@ def facebook(acc: dict, known: dict, page: bool = False) -> dict:
             for e in tab.js(FB_LOG) or []:
                 desc, text = fb_log_entry(e["lines"])
                 c = fb_comment("", "", e["link"])
-                own_post = bool(re.search(r"svůj|svou|your own", desc, re.I)) or (slug and f"facebook.com/{slug}/" in e["link"].lower())
+                # on our own post, photo or video ("svůj komentář" in someone's group post is not ours to collect)
+                own_post = bool(re.search(r"(svůj|svou|své|your own|your)\s+(příspěvek|fotku|fotografii|video|reel|status|post|photo)", desc, re.I)) \
+                    or bool(slug and f"facebook.com/{slug}/" in e["link"].lower())
                 if not desc or not own_post or c["id"] in {i["id"] for i in inbox}:
                     continue
                 inbox.append({"id": c["id"], "type": "reply" if re.search(r"odpověděl|replied", desc, re.I) else "comment",
