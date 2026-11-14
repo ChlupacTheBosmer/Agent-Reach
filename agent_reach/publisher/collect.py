@@ -48,6 +48,46 @@ def _num(value) -> int | None:
     return int(re.sub(r"\D", "", num))
 
 
+_UNITS = [("mo", 2592000), ("měs", 2592000), ("min", 60), ("sek", 1), ("hod", 3600), ("týd", 604800), ("rok", 31536000),
+          ("let", 31536000), ("yr", 31536000), ("den", 86400), ("dn", 86400), ("s", 1), ("m", 60), ("h", 3600), ("d", 86400),
+          ("w", 604800), ("t", 604800), ("y", 31536000), ("r", 31536000)]
+
+
+def rel_time(text: str, now: float | None = None) -> float | None:
+    """'2 h', '2h', '37 t', '1r', '3d (edited)', '5 min', '2 měs', 'now' -> unix time (approximate); None if not a time."""
+    now = time.time() if now is None else now
+    t = (text or "").lower().replace("(edited)", "").replace("(upraveno)", "").split("•")[0].strip()
+    if t in ("now", "teď", "just now", "právě teď"):
+        return now
+    m = re.match(r"^(\d+)\s*([a-zěščřžýáíéůú]+)\.?$", t)
+    if not m:
+        return None
+    for unit, secs in _UNITS:
+        if m.group(2).startswith(unit):
+            return now - int(m.group(1)) * secs
+    return None
+
+
+_CZ_MONTHS = ["leden", "únor", "březen", "duben", "květen", "červen", "červenec", "srpen", "září", "říjen", "listopad", "prosinec"]
+_EN_MONTHS = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"]
+
+
+def day_time(day: str, hhmm: str = "") -> float | None:
+    """'13. listopad 2026' (or 'November 13, 2026') + '23:38' -> unix time in Prague; None if not a date."""
+    from zoneinfo import ZoneInfo
+    d = (day or "").strip().lower()
+    m = re.match(r"^(\d{1,2})\.\s*([a-zěščřžýáíéůú]+)\s+(\d{4})$", d)
+    if m and m.group(2) in _CZ_MONTHS:
+        y, mo, dd = int(m.group(3)), _CZ_MONTHS.index(m.group(2)) + 1, int(m.group(1))
+    else:
+        m = re.match(r"^([a-z]+)\s+(\d{1,2}),\s*(\d{4})$", d)
+        if not (m and m.group(1) in _EN_MONTHS):
+            return None
+        y, mo, dd = int(m.group(3)), _EN_MONTHS.index(m.group(1)) + 1, int(m.group(2))
+    hh, mi = (int(x) for x in hhmm.split(":")) if re.match(r"^\d{1,2}:\d{2}$", hhmm or "") else (12, 0)
+    return dt.datetime(y, mo, dd, hh, mi, tzinfo=ZoneInfo("Europe/Prague")).timestamp()
+
+
 def _id(*parts) -> str:
     return hashlib.sha256("|".join(str(p) for p in parts).encode()).hexdigest()[:20]
 
@@ -106,18 +146,19 @@ def bluesky(acc: dict, known: dict) -> dict:
         except SystemExit:
             _unread(p, known)
             continue
-        stack = list(th.get("replies") or [])
+        stack = [(r, "") for r in th.get("replies") or []]  # (reply, the reply it answers; '' = answers the post)
         while stack:
-            r = stack.pop(0)
+            r, parent = stack.pop(0)
             q = r.get("post") or {}
-            stack += r.get("replies") or []
             if not q.get("uri"):
                 continue
+            stack += [(x, "bsky:" + q["uri"]) for x in r.get("replies") or []]
             a, rec = q.get("author", {}), q.get("record", {})
             inbox.append({"id": "bsky:" + q["uri"], "type": "reply", "post_url": p["url"],
                           "item_url": _bsky_web(q["uri"].replace(f"at://{a.get('did')}/", f"at://{a.get('handle')}/")),
                           "author_handle": a.get("handle", ""), "author_name": a.get("displayName") or a.get("handle", ""),
-                          "text": rec.get("text", ""), "created_at": _ts(rec.get("createdAt")), "mine": a.get("did") == did})
+                          "text": rec.get("text", ""), "created_at": _ts(rec.get("createdAt")), "mine": a.get("did") == did,
+                          "parent_id": parent})
     prof = get(f"app.bsky.actor.getProfile?actor={did}")
     return {"inbox": inbox, "posts": posts,
             "profile": {"followers": prof.get("followersCount"), "following": prof.get("followsCount"), "posts": prof.get("postsCount")}}
@@ -313,6 +354,11 @@ def li_comment(lines: list) -> tuple:
     return name, "\n".join(text).strip()
 
 
+def li_when(lines: list) -> float | None:
+    """The comment's time line ('2h', '3d (edited)') as unix time."""
+    return next((rel_time(x) for x in lines[1:8] if _LI_TIME.match(x.replace("(edited)", "").replace("(upraveno)", "").strip())), None)
+
+
 def linkedin(acc: dict, known: dict, page: bool = False) -> dict:
     from agent_reach import outbox
     from agent_reach.backends.opencli import opencli_call
@@ -353,7 +399,7 @@ def linkedin(acc: dict, known: dict, page: bool = False) -> dict:
                     continue
                 inbox.append({"id": "li:" + _id(p["url"], name, text), "type": "comment", "post_url": p["url"], "item_url": p["url"],
                               "author_handle": c["profile"].rstrip("/").rsplit("/", 1)[-1], "author_name": name, "text": text,
-                              "created_at": None, "mine": c["profile"].rstrip("/") == base.rstrip("/") or name == acc.get("label")})
+                              "created_at": li_when(c["lines"]), "mine": c["profile"].rstrip("/") == base.rstrip("/") or name == acc.get("label")})
         tab.js("location.href = " + json.dumps(f"https://www.linkedin.com/company/{acc['handle']}/admin/notifications/all/" if page
                                                else "https://www.linkedin.com/notifications/"))
         time.sleep(2)
@@ -378,7 +424,8 @@ FB_POST_BOXES = r"""(() => { const sel = '[role=main] [aria-label^="Okomentovat 
     let e = b; while (e.parentElement && e.parentElement.querySelectorAll(sel).length <= 1) e = e.parentElement;
     e.setAttribute('data-ar-post', k);
     const label = b.getAttribute('aria-label') || '';
-    return {k, comments: (label.match(/(\d[\d\s.,]*)\s*(koment|comment)/i) || [])[1] || '', by: (label.match(/(?:od|by|on)\s+(.+?)(?:,|$)/i) || [])[1] || ''};
+    return {k, comments: (label.match(/(\d[\d\s.,]*)\s*(koment|comment)/i) || [])[1] || '', by: (label.match(/(?:od|by|on)\s+(.+?)(?:,|$)/i) || [])[1] || '',
+            lines: [...e.querySelectorAll('[dir=auto]')].filter(x => !x.closest('[role=article][aria-label]')).map(x => (x.innerText || '').trim()).filter(Boolean).slice(0, 12)};
   }); })()"""
 #: the post's own address, once hovering filled its timestamp link (posts, photos and videos keep their id parameters)
 FB_POST_LINK = r"""((k) => { const keep = (h) => { const u = new URL(h); const q = ['fbid', 'set', 'story_fbid', 'id', 'v'].filter(n => u.searchParams.get(n)).map(n => n + '=' + u.searchParams.get(n)).join('&'); return u.origin + u.pathname + (q ? '?' + q : ''); };
@@ -393,10 +440,14 @@ FB_COMMENTS = r"""[...document.querySelectorAll('[role=article][aria-label^="Kom
   link: ([...a.querySelectorAll('a[href*="comment_id="]')].map(x => x.href).find(h => /\/posts\/|story_fbid|permalink|\/videos\/|\/photo/.test(h)) || '')
 })).slice(0, 60)"""
 #: the activity log's comment entries (comments the account wrote): description line, text, audience, time, link
-FB_LOG = r"""[...document.querySelectorAll('[role=main] a[href*="comment_id="]')].map(a => {
-  let e = a, i = 0; while (e && i < 8 && !/okomentoval|odpověděl|commented|replied/i.test(e.innerText || '')) { e = e.parentElement; i++; }
-  return {link: a.href, lines: e ? (e.innerText || '').split('\n').map(t => t.trim()).filter(Boolean) : []};
-}).slice(0, 40)"""
+FB_LOG = r"""(() => {
+  const DAY = /^\d{1,2}\.\s*\S+\s+\d{4}$|^[A-Z][a-z]+ \d{1,2}, \d{4}$/;
+  const days = [...document.querySelectorAll('[role=main] span, [role=main] h2, [role=main] h3, [role=main] div')].filter(d => d.children.length === 0 && DAY.test((d.innerText || '').trim()));
+  return [...document.querySelectorAll('[role=main] a[href*="comment_id="]')].map(a => {
+    let e = a, i = 0; while (e && i < 8 && !/okomentoval|odpověděl|commented|replied/i.test(e.innerText || '')) { e = e.parentElement; i++; }
+    const day = days.filter(d => d.compareDocumentPosition(a) & Node.DOCUMENT_POSITION_FOLLOWING).pop();  // the day heading above the entry
+    return {link: a.href, day: day ? day.innerText.trim() : '', lines: e ? (e.innerText || '').split('\n').map(t => t.trim()).filter(Boolean) : []};
+  }).slice(0, 40); })()"""
 _FB_LOG_DESC = re.compile(r"okomentoval|odpověděl|commented|replied", re.I)
 _FB_LOG_END = re.compile(r"^(přátelé|veřejné|veřejný|soukromá skupina|veřejná skupina|jen já|vlastní|friends|public|only me|custom|private group|public group|zobrazit|view|\d{1,2}:\d{2})$", re.I)
 
@@ -419,6 +470,13 @@ _FB_END = re.compile(r"^(odpovědět|reply|to se mi líbí|like|sdílet|share|up
 _FB_TIME = re.compile(r"^(\d+\s*\S{1,6}|teď|just now|včera|yesterday)$", re.I)
 
 
+def fb_post_text(lines: list, by: str) -> str:
+    """The text pieces of a wall post (author, times and buttons left out), joined: enough to recognise the post."""
+    keep = [x for x in lines if x != by and not _FB_TIME.match(x) and not _FB_END.match(x) and len(x) > 1
+            and not re.match(r"^(\d+|okomentovat|komentář|sdílet|comment|share)$", x, re.I)]
+    return " ".join(dict.fromkeys(keep))[:500]
+
+
 def fb_comment(label: str, text: str, link: str) -> dict:
     """One comment article -> author, text, clean link (post + comment_id) and id."""
     m = _FB_WHO.match(label)
@@ -427,7 +485,9 @@ def fb_comment(label: str, text: str, link: str) -> dict:
     lines = [x for x in lines if x and x != "·"]
     if lines and lines[0] == who:
         lines = lines[1:]
+    when = None
     if lines and _FB_TIME.match(lines[0]):
+        when = rel_time(lines[0])
         lines = lines[1:]
     body = []
     for x in lines:
@@ -439,7 +499,7 @@ def fb_comment(label: str, text: str, link: str) -> dict:
     base, _, query = link.partition("?")  # photos are addressed by their fbid parameter: keep it
     keep = [kv for kv in query.split("&") if kv.split("=")[0] in ("fbid", "set", "story_fbid", "id", "v")]
     post = base + ("?" + "&".join(keep) if keep else "")
-    return {"who": who, "text": "\n".join(body).strip(), "post": post,
+    return {"who": who, "text": "\n".join(body).strip(), "post": post, "when": when, "parent": f"fb:{cid}" if reply and cid else "",
             "link": f"{post}{'&' if '?' in post else '?'}comment_id={cid}" + (f"&reply_comment_id={reply}" if reply else "") if cid else post,
             "id": "fb:" + (reply or cid or _id(post, who, " ".join(body)))}
 
@@ -480,7 +540,8 @@ def facebook(acc: dict, known: dict, page: bool = False) -> dict:
                     time.sleep(0.4)
                 url = tab.js(f"({FB_POST_LINK})({box['k']})")
             if url and url not in {p["url"] for p in posts}:
-                posts.append({"url": url, "text": "", "created_at": None, "likes": None, "replies": _num(box["comments"]) or None,
+                posts.append({"url": url, "text": fb_post_text(box.get("lines") or [], box.get("by", "")), "created_at": None,
+                              "likes": None, "replies": _num(box["comments"]) or None,
                               "reposts": None, "quotes": None, "views": None, "impressions": None})
         # the comment button often carries no count: such posts are opened too (newest first) and counted there
         todo = _pick([p for p in posts if p["replies"]], known)
@@ -499,7 +560,7 @@ def facebook(acc: dict, known: dict, page: bool = False) -> dict:
                 seen.add(c["id"])
                 inbox.append({"id": c["id"], "type": "reply" if a["label"].lower().startswith(("odpověď", "reply")) else "comment",
                               "post_url": p["url"], "item_url": c["link"], "author_handle": "", "author_name": c["who"],
-                              "text": c["text"], "created_at": None, "mine": c["who"] == me})
+                              "text": c["text"], "created_at": c["when"], "mine": c["who"] == me, "parent_id": c["parent"]})
             p["replies"] = len(seen)
         if not page:  # our own comments, from the activity log (nothing notifies us about them)
             tab.js("location.href = 'https://www.facebook.com/me/allactivity?category_key=COMMENTSCLUSTER'")
@@ -515,9 +576,10 @@ def facebook(acc: dict, known: dict, page: bool = False) -> dict:
                     or bool(slug and f"facebook.com/{slug}/" in e["link"].lower())
                 if not desc or not own_post or c["id"] in {i["id"] for i in inbox}:
                     continue
+                hhmm = next((x for x in e["lines"] if re.match(r"^\d{1,2}:\d{2}$", x)), "")
                 inbox.append({"id": c["id"], "type": "reply" if re.search(r"odpověděl|replied", desc, re.I) else "comment",
                               "post_url": c["post"], "item_url": c["link"], "author_handle": "", "author_name": me, "text": text,
-                              "created_at": None, "mine": True})
+                              "created_at": day_time(e.get("day", ""), hhmm), "mine": True, "parent_id": c["parent"]})
     finally:
         tab.close()
     return {"inbox": inbox, "posts": posts, "profile": profile}

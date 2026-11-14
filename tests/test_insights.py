@@ -203,3 +203,18 @@ def test_facebook_activity_log_entry():
     assert fb_log_entry(["13. listopad 2026", "Petr Chlup okomentoval svůj příspěvek.", ".", "Přátelé", "23:38", "Zobrazit"]) == \
         ("Petr Chlup okomentoval svůj příspěvek.", ".")
     assert fb_log_entry(["Petr odpověděl(a) na komentář uživatele Jan.", "Ano", "Soukromá skupina", "23:04"])[1] == "Ano"
+
+
+def test_inbox_items_carry_their_post_and_parent(tmp_path, monkeypatch):
+    monkeypatch.setenv("PUBLISHER_DATA", str(tmp_path))
+    from agent_reach.publisher import insights, store
+    db = store.connect()
+    db.execute("INSERT INTO accounts VALUES ('fb','facebook','Petr','Petr','browser','','',  'ok', 0)")
+    acc = {"id": "fb", "network": "facebook"}
+    insights._save(db, acc, {"inbox": [{"id": "fb:1", "text": "Is it free?", "author_name": "Jana", "post_url": "P"},
+                                       {"id": "fb:2", "text": "Yes", "author_name": "Petr", "post_url": "P", "parent_id": "fb:1", "mine": True}],
+                             "posts": [{"url": "P", "text": "Apply to V4AIR"}]}, 1.0)
+    insights._save(db, acc, {"inbox": [{"id": "fb:1", "text": "Is it free?", "created_at": 5.0}], "posts": []}, 2.0)  # a later read knows the time
+    r = {x["id"]: x for x in insights.inbox_query(db, {})}
+    assert r["fb:2"]["post_text"] == "Apply to V4AIR" and (r["fb:2"]["parent_author"], r["fb:2"]["parent_text"]) == ("Jana", "Is it free?")
+    assert r["fb:1"]["created_at"] == 5.0 and r["fb:1"]["parent_text"] == ""

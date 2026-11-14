@@ -114,11 +114,15 @@ def _save(db, acc: dict, res: dict, now: float) -> int:
     for it in res.get("inbox", []):
         mine = bool(it.get("mine"))  # our own comments need no answer: they arrive as done, still listed and replyable
         cur = db.execute("INSERT OR IGNORE INTO inbox(id, account, network, type, post_url, item_url, author_handle, author_name, "
-                         "text, question, created_at, fetched_at, mine, status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                         "text, question, created_at, fetched_at, mine, status, parent_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                          (it["id"], acc["id"], acc["network"], it.get("type", "comment"), it.get("post_url", ""), it.get("item_url", ""),
                           it.get("author_handle", ""), it.get("author_name", ""), it.get("text", ""), int(bool(it.get("question")) and not mine),
-                          it.get("created_at"), now, int(mine), "done" if mine else "new"))
+                          it.get("created_at"), now, int(mine), "done" if mine else "new", it.get("parent_id") or ""))
         new += cur.rowcount
+        if not cur.rowcount:  # seen before: fill in what an older read did not know (time, parent, post), never the status
+            db.execute("UPDATE inbox SET created_at=COALESCE(created_at, ?), parent_id=CASE WHEN parent_id='' THEN ? ELSE parent_id END, "
+                       "post_url=CASE WHEN post_url='' THEN ? ELSE post_url END WHERE id=?",
+                       (it.get("created_at"), it.get("parent_id") or "", it.get("post_url", ""), it["id"]))
     keys = ("likes", "reposts", "replies", "quotes", "views", "impressions", "saves")
     for p in res.get("posts", []):
         if not p.get("url"):
@@ -190,7 +194,10 @@ def mark_sent(db, post: dict, result: str) -> None:
 # ── inbox ──
 
 def inbox_query(db, f: dict) -> list:
-    sql, args = ["SELECT i.*, a.label AS account_label FROM inbox i JOIN accounts a ON a.id=i.account WHERE 1=1"], []
+    # with each item: the post it is on (our post: its text, author = the account) and the comment it answers, if known
+    sql, args = ["SELECT i.*, a.label AS account_label, COALESCE(o.text, '') AS post_text, COALESCE(p.author_name, '') AS parent_author, "
+                 "COALESCE(p.text, '') AS parent_text FROM inbox i JOIN accounts a ON a.id=i.account "
+                 "LEFT JOIN own_posts o ON o.url=i.post_url LEFT JOIN inbox p ON p.id=i.parent_id WHERE 1=1"], []
     for key in ("id", "network", "account", "status", "type"):
         vals = f.get(key)
         if isinstance(vals, list) and not vals and key == "account":
@@ -206,7 +213,7 @@ def inbox_query(db, f: dict) -> list:
     if f.get("search"):
         sql.append("AND (i.text LIKE ? OR i.author_name LIKE ? OR i.author_handle LIKE ?)")
         args += [f"%{f['search']}%"] * 3
-    sql.append("ORDER BY COALESCE(i.created_at, i.fetched_at) DESC LIMIT 300")
+    sql.append("ORDER BY i.created_at IS NULL, COALESCE(i.created_at, i.fetched_at) DESC LIMIT 300")  # by the comment's date; undated last
     return store.rows(db.execute(" ".join(sql), args))
 
 
