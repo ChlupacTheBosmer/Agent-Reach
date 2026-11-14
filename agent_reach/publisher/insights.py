@@ -112,11 +112,12 @@ def collect_account(db, account_id: str, actor: str = "publisher", manual: bool 
 def _save(db, acc: dict, res: dict, now: float) -> int:
     new = 0
     for it in res.get("inbox", []):
+        mine = bool(it.get("mine"))  # our own comments need no answer: they arrive as done, still listed and replyable
         cur = db.execute("INSERT OR IGNORE INTO inbox(id, account, network, type, post_url, item_url, author_handle, author_name, "
-                         "text, question, created_at, fetched_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                         "text, question, created_at, fetched_at, mine, status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                          (it["id"], acc["id"], acc["network"], it.get("type", "comment"), it.get("post_url", ""), it.get("item_url", ""),
-                          it.get("author_handle", ""), it.get("author_name", ""), it.get("text", ""), int(bool(it.get("question"))),
-                          it.get("created_at"), now))
+                          it.get("author_handle", ""), it.get("author_name", ""), it.get("text", ""), int(bool(it.get("question")) and not mine),
+                          it.get("created_at"), now, int(mine), "done" if mine else "new"))
         new += cur.rowcount
     keys = ("likes", "reposts", "replies", "quotes", "views", "impressions", "saves")
     for p in res.get("posts", []):
@@ -200,6 +201,8 @@ def inbox_query(db, f: dict) -> list:
             args += vals
     if f.get("question"):
         sql.append("AND i.question=1")
+    if f.get("hide_mine"):
+        sql.append("AND i.mine=0")
     if f.get("search"):
         sql.append("AND (i.text LIKE ? OR i.author_name LIKE ? OR i.author_handle LIKE ?)")
         args += [f"%{f['search']}%"] * 3

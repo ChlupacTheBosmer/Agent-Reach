@@ -44,7 +44,8 @@ CREATE TABLE IF NOT EXISTS collect_state (
   manual_at REAL);
 """
 #: columns added after the first release: (table, column, definition)
-MIGRATIONS = [("posts", "meta", "TEXT NOT NULL DEFAULT '{}'"), ("posts", "url", "TEXT NOT NULL DEFAULT ''")]
+MIGRATIONS = [("posts", "meta", "TEXT NOT NULL DEFAULT '{}'"), ("posts", "url", "TEXT NOT NULL DEFAULT ''"),
+              ("inbox", "mine", "INTEGER NOT NULL DEFAULT 0")]  # mine: written by the account itself
 
 
 def data_dir() -> Path:
