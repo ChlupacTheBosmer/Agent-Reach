@@ -371,13 +371,22 @@ def linkedin(acc: dict, known: dict, page: bool = False) -> dict:
 
 FB_FOLLOWERS = r"""(() => { const t = (document.querySelector('[role=main]') || document.body).innerText;
   const m = t.match(/([\d\s.,]+\s*(?:tis\.|K|M)?)\s*(sledující|followers)/i); return m ? m[1] : null; })()"""
-#: our posts on the page, found by their comment button ("Okomentovat příspěvek od X, 3 komentáře")
-FB_POSTS = r"""[...document.querySelectorAll('[role=main] [aria-label^="Okomentovat příspěvek od"], [role=main] [aria-label^="Leave a comment"], [role=main] [aria-label^="Comment on"]')].map(b => {
-  let e = b, i = 0; while (e && i < 25 && !e.querySelector('a[href*="/posts/"], a[href*="story_fbid"], a[href*="permalink"]')) { e = e.parentElement; i++; }
-  const link = e ? [...e.querySelectorAll('a[href]')].map(a => a.href.split('?')[0]).find(h => /\/posts\/|story_fbid|permalink/.test(h)) : '';
-  const label = b.getAttribute('aria-label') || '';
-  return {url: link || '', comments: (label.match(/(\d[\d\s.,]*)\s*(koment|comment)/i) || [])[1] || '0', by: (label.match(/(?:od|by|on)\s+(.+?)(?:,|$)/i) || [])[1] || ''};
-}).filter(p => p.url).filter((p, i, a) => a.findIndex(q => q.url === p.url) === i).slice(0, 12)"""
+#: our posts on the wall, found by their comment button ("Okomentovat příspěvek od X, 3 komentáře"): each post is the
+#: largest block around its button holding no other post's button; marked data-ar-post=<n> so it can be hovered
+FB_POST_BOXES = r"""(() => { const sel = '[role=main] [aria-label^="Okomentovat příspěvek od"], [role=main] [aria-label^="Leave a comment"], [role=main] [aria-label^="Comment on"]';
+  return [...document.querySelectorAll(sel)].slice(0, 12).map((b, k) => {
+    let e = b; while (e.parentElement && e.parentElement.querySelectorAll(sel).length <= 1) e = e.parentElement;
+    e.setAttribute('data-ar-post', k);
+    const label = b.getAttribute('aria-label') || '';
+    return {k, comments: (label.match(/(\d[\d\s.,]*)\s*(koment|comment)/i) || [])[1] || '', by: (label.match(/(?:od|by|on)\s+(.+?)(?:,|$)/i) || [])[1] || ''};
+  }); })()"""
+#: the post's own address, once hovering filled its timestamp link (posts, photos and videos keep their id parameters)
+FB_POST_LINK = r"""((k) => { const keep = (h) => { const u = new URL(h); const q = ['fbid', 'set', 'story_fbid', 'id', 'v'].filter(n => u.searchParams.get(n)).map(n => n + '=' + u.searchParams.get(n)).join('&'); return u.origin + u.pathname + (q ? '?' + q : ''); };
+  return ([...document.querySelectorAll(`[data-ar-post="${k}"] a[href]`)].filter(a => !a.closest('[role=article][aria-label]')).map(a => a.href)
+    .filter(h => /\/posts\/|story_fbid|permalink|\/videos\/|\/photo\/?\?fbid=|\/photos\//.test(h)).map(keep)[0]) || ''; })"""
+#: the short links of a post (timestamp, "photo"), where a mouse hover makes Facebook fill in the real address
+FB_HOVER_SPOTS = r"""((k) => [...document.querySelectorAll(`[data-ar-post="${k}"] a`)].filter(a => !a.closest('[role=article][aria-label]') && (a.innerText || '').trim().length < 25)
+  .slice(0, 6).map(a => { a.scrollIntoView({block: 'center'}); const r = a.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; }))"""
 #: comments and replies on the open page: author from the label, the comment's own link (post link + comment_id)
 FB_COMMENTS = r"""[...document.querySelectorAll('[role=article][aria-label^="Komentář od"], [role=article][aria-label^="Odpověď od"], [role=article][aria-label^="Comment by"], [role=article][aria-label^="Reply by"]')].map(a => ({
   label: a.getAttribute('aria-label') || '', text: a.innerText || '',
@@ -405,9 +414,11 @@ def fb_comment(label: str, text: str, link: str) -> dict:
         body.append(x)
     cid = (re.search(r"[?&]comment_id=(\d+)", link) or [None, None])[1]
     reply = (re.search(r"[?&]reply_comment_id=(\d+)", link) or [None, None])[1]
-    post = link.split("?")[0]
+    base, _, query = link.partition("?")  # photos are addressed by their fbid parameter: keep it
+    keep = [kv for kv in query.split("&") if kv.split("=")[0] in ("fbid", "set", "story_fbid", "id", "v")]
+    post = base + ("?" + "&".join(keep) if keep else "")
     return {"who": who, "text": "\n".join(body).strip(), "post": post,
-            "link": f"{post}?comment_id={cid}" + (f"&reply_comment_id={reply}" if reply else "") if cid else post,
+            "link": f"{post}{'&' if '?' in post else '?'}comment_id={cid}" + (f"&reply_comment_id={reply}" if reply else "") if cid else post,
             "id": "fb:" + (reply or cid or _id(post, who, " ".join(body)))}
 
 
@@ -434,8 +445,17 @@ def facebook(acc: dict, known: dict, page: bool = False) -> dict:
         for _ in range(3):  # the timeline loads as it scrolls, like a person looking down their own wall
             tab.js("window.scrollBy(0, 1200)")
             time.sleep(2.5)
-        posts = [{"url": p["url"], "text": "", "created_at": None, "likes": None, "replies": _num(p["comments"]) or None, "reposts": None,
-                  "quotes": None, "views": None, "impressions": None} for p in (tab.js(FB_POSTS) or [])]
+        posts = []
+        for box in tab.js(FB_POST_BOXES) or []:
+            url = tab.js(f"({FB_POST_LINK})({box['k']})")
+            if not url:  # the link appears when the mouse passes over the post's timestamp, as for a person
+                for x, y in tab.js(f"({FB_HOVER_SPOTS})({box['k']})") or []:
+                    tab.cdp.call("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": x, "y": y}, target_id=tab.id)
+                    time.sleep(0.4)
+                url = tab.js(f"({FB_POST_LINK})({box['k']})")
+            if url and url not in {p["url"] for p in posts}:
+                posts.append({"url": url, "text": "", "created_at": None, "likes": None, "replies": _num(box["comments"]) or None,
+                              "reposts": None, "quotes": None, "views": None, "impressions": None})
         # the comment button often carries no count: such posts are opened too (newest first) and counted there
         todo = _pick([p for p in posts if p["replies"]], known)
         todo += [p for p in posts if p["replies"] is None][:max(0, MAX_DETAIL - len(todo))]
