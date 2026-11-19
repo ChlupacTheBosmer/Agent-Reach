@@ -334,3 +334,13 @@ def test_every_answer_says_the_connection_closes():
         assert r.status == 200 and r.getheader("Connection") == "close"
     finally:
         srv.shutdown()
+
+
+def test_bluesky_email_signs_in_but_the_handle_comes_from_bluesky(db, monkeypatch):
+    monkeypatch.setattr(core, "in_home", lambda acc, cmd, payload, timeout=120: {"ok": True, "result": "logged in as @v4air.bsky.social", "handle": "v4air.bsky.social"} if cmd == "check" else {"ok": True})
+    acc = core.create_account(db, {"network": "bluesky", "label": "V4AIR", "owner": "V4AIR", "handle": "v4air.bsky.social"}, "petr")
+    core.set_credentials(db, acc["id"], {"bluesky_handle": "info@v4air.eu", "bluesky_app_password": "x"}, "petr")
+    assert core.account(db, acc["id"])["handle"] == "v4air.bsky.social"  # an e-mail never becomes the handle
+    db.execute("UPDATE accounts SET handle='info@v4air.eu' WHERE id=?", (acc["id"],))  # as saved before this fix
+    core.check_account(db, acc["id"], "petr")
+    assert core.account(db, acc["id"])["handle"] == "v4air.bsky.social"

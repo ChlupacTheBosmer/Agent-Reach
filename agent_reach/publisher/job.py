@@ -163,7 +163,7 @@ def check(_payload: dict) -> dict:
             return {"ok": False, "error": "no app password yet: create one in Bluesky (Settings > Privacy and security > "
                                           "App passwords, tick direct messages) and enter it on the accounts page"}
         sess = outbox._bsky_session()
-        return {"ok": True, "result": f"logged in as @{sess['handle']}"}
+        return {"ok": True, "result": f"logged in as @{sess['handle']}", "handle": sess["handle"]}
     return {"ok": False, "error": f"no check for {net}"}
 
 

@@ -208,7 +208,9 @@ def set_credentials(db, account_id: str, body: dict, actor: str) -> dict:
     if not values:
         raise Refused(f"{acc['network']} takes credentials {', '.join(allowed) or '(none: log in in the live view)'}")
     in_home(account_id, "configure", values)
-    if values.get("bluesky_handle"):
+    # Bluesky signs in with a handle or the account's e-mail; an e-mail is only the sign-in name, the account's handle
+    # then comes from Bluesky itself at the next check
+    if values.get("bluesky_handle") and "@" not in values["bluesky_handle"].lstrip("@"):
         db.execute("UPDATE accounts SET handle=? WHERE id=?", (values["bluesky_handle"].lstrip("@"), account_id))
     db.execute("UPDATE accounts SET status='unchecked' WHERE id=?", (account_id,))
     store.log(db, actor, "account.credentials", {"account": account_id, "keys": sorted(values)})
@@ -230,7 +232,9 @@ def groups(db, account_id: str, actor: str) -> list:
 def check_account(db, account_id: str, actor: str) -> dict:
     _ACCOUNTS_CACHE[account_id] = account(db, account_id)["handle"]
     out = in_home(account_id, "check", {})
-    if out.get("ok") and out.get("handle") and not account(db, account_id)["handle"]:
+    acc = account(db, account_id)
+    # a found handle fills an empty one; on Bluesky the signed-in session is the truth (the account may hold an e-mail)
+    if out.get("ok") and out.get("handle") and (not acc["handle"] or (acc["network"] == "bluesky" and acc["handle"] != out["handle"])):
         db.execute("UPDATE accounts SET handle=? WHERE id=?", (str(out["handle"]).lstrip("@")[:80], account_id))
     status = "ok" if out.get("ok") else ("needs-login" if account(db, account_id)["route"] == "browser" else "needs-credentials")
     db.execute("UPDATE accounts SET status=? WHERE id=?", (status, account_id))
