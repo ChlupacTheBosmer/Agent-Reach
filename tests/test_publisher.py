@@ -316,3 +316,21 @@ def test_resolve_unknown_post(tmp_path, monkeypatch):
     assert out["status"] == "sent" and out["url"] == "https://x.com/a/status/1" and "checked by Petr" in out["result"]
     with pytest.raises(core.Refused):  # only once, only from unknown
         core.resolve(db, 6, {"outcome": "failed"}, "Petr")
+
+
+def test_every_answer_says_the_connection_closes():
+    """A client that pools connections must not reuse one this server has closed (the socials app got HTTP 500)."""
+    import http.client
+    import threading
+    from http.server import ThreadingHTTPServer
+    from agent_reach.publisher import server
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        c = http.client.HTTPConnection("127.0.0.1", srv.server_address[1], timeout=10)
+        c.request("GET", "/healthz")
+        r = c.getresponse()
+        r.read()
+        assert r.status == 200 and r.getheader("Connection") == "close"
+    finally:
+        srv.shutdown()

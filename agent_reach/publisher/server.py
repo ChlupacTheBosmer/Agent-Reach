@@ -80,6 +80,12 @@ ROUTES = [
 class Handler(BaseHTTPRequestHandler):
     secret = ""
 
+    def end_headers(self) -> None:
+        # this server closes the connection after every answer (HTTP/1.0); say so, or a client that keeps connections
+        # for reuse (the socials app's runtime, workerd) sends its next request into a closed one: Broken pipe, HTTP 500
+        self.send_header("Connection", "close")
+        super().end_headers()
+
     def _reply(self, code: int, data) -> None:
         raw = json.dumps(data, ensure_ascii=False).encode("utf-8")
         self.send_response(code)
