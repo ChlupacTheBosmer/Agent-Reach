@@ -220,10 +220,12 @@ def page_look(payload: dict) -> dict:
     """What a LinkedIn company page's admin screen shows (labels of the visible controls), after opening the named
     controls one by one. For building the page-invitation flow; it refuses any control that sends or confirms."""
     from agent_reach import outbox
-    slug = re.sub(r"[^A-Za-z0-9_%-]", "", str(payload.get("query") or ""))
+    query = str(payload.get("query") or "")
+    person = query.startswith("in/")          # "in/<profile>" looks at a person's profile instead (why is there no Connect button?)
+    slug = re.sub(r"[^A-Za-z0-9_%-]", "", query[3:] if person else query)
     if not slug:
         raise SystemExit("which company page?")
-    tab = outbox.Tab(f"https://www.linkedin.com/company/{slug}/admin/", "linkedin")
+    tab = outbox.Tab(f"https://www.linkedin.com/in/{slug}/" if person else f"https://www.linkedin.com/company/{slug}/admin/", "linkedin")
     try:
         time.sleep(8)
         steps = [tab.js(LOOK_JS)]
