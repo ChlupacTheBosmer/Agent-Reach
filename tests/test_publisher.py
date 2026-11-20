@@ -397,3 +397,21 @@ def test_connect_takes_the_name_the_profile_shows_when_it_is_the_same_person(mon
     shown = "Petr Svoboda"
     with pytest.raises(SystemExit, match="not sent: profile_name_mismatch .*Petr Svoboda"):
         outbox.connect(d, True)
+
+
+def test_no_connect_button_on_a_profile_among_the_sent_invitations_is_pending(monkeypatch):
+    from agent_reach import outbox
+    from agent_reach.backends import opencli
+    sent = [{"name": "Jan Novák", "profile_url": "https://www.linkedin.com/in/jn/"}]
+
+    def fake(site, args, timeout=0):
+        if args[0] == "sent-invitations":
+            return {"ok": True, "data": sent}
+        return {"ok": True, "data": [{"status": "not_connectable", "reason": "connect_button_not_found"}]}
+    monkeypatch.setattr(opencli, "opencli_call", fake)
+    d = {"kind": "linkedin-connect", "target": "https://www.linkedin.com/in/jn", "expected_name": "Jan Novak", "text": ""}
+    with pytest.raises(SystemExit, match="not sent: connection_pending"):
+        outbox.connect(d, True)
+    sent = [{"name": "Eva Malá", "profile_url": "https://www.linkedin.com/in/em/"}]
+    with pytest.raises(SystemExit, match="not sent: connect_button_not_found"):
+        outbox.connect(d, True)

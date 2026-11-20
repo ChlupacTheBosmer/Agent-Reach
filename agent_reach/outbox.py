@@ -421,16 +421,40 @@ def connect(d: dict, send: bool) -> str:
                 name = shown.group(1).strip()
                 continue
             raise SystemExit(f"not sent: {reason}" + (f" (the profile shows {shown.group(1).strip()!r})" if shown else "")) from None
+    if send and _reason(out) == "connect_button_not_found" and _invited(d["target"], name):
+        raise SystemExit("not sent: connection_pending (the profile shows no Connect button and is among the sent invitations)")
     return connect_result(out) if send else "check ok (OpenCLI dry run): " + json.dumps(out, ensure_ascii=False)[:300]
+
+
+def _rows(out) -> list:
+    if isinstance(out, dict):  # OpenCLI 2.0 wraps the rows as {ok, data: [...]}
+        out = next((out[k] for k in ("data", "items") if isinstance(out.get(k), list)), [out])
+    return [r for r in out if isinstance(r, dict)] if isinstance(out, list) else []
+
+
+def _reason(out) -> str:
+    row = (_rows(out) or [{}])[0]
+    return str(row.get("reason") or row.get("blockReason") or "")
+
+
+def _invited(target: str, name: str) -> bool:
+    """The profile is among this account's sent invitations (a profile with a pending request can show no Connect
+    button and no Pending mark the probe knows). A failed read counts as 'not found': the caller then reports what it saw."""
+    from agent_reach.backends.opencli import opencli_call
+    slug = lambda u: re.sub(r"/+$", "", (u or "").split("?")[0]).rsplit("/in/", 1)[-1].lower()
+    try:
+        rows = _rows(opencli_call("linkedin", ["sent-invitations"], timeout=120))
+    except Exception:  # noqa: BLE001
+        return False
+    from urllib.parse import unquote
+    return any(unquote(slug(r.get("profile_url"))) == unquote(slug(target)) or same_person(name, str(r.get("name") or "")) for r in rows)
 
 
 def connect_result(out) -> str:
     """What OpenCLI's `connect --send` did, as the queue reads it: 'sent: ...' only when LinkedIn lists the invitation;
     'not sent: <reason>' (already_connected, connection_pending, profile_name_mismatch...) fails the post;
     a click nobody could confirm is UNKNOWN, so a person looks before anything is sent again."""
-    if isinstance(out, dict):  # OpenCLI 2.0 wraps the rows as {ok, data: [...]}
-        out = next((out[k] for k in ("data", "items") if isinstance(out.get(k), list)), [out])
-    row = (out[0] if isinstance(out, list) and out and isinstance(out[0], dict) else {}) or {}
+    row = (_rows(out) or [{}])[0]
     status, reason = str(row.get("status") or ""), str(row.get("reason") or row.get("blockReason") or "")
     if status == "sent_verified":
         return "sent: " + json.dumps({k: row.get(k) for k in ("recipient", "profile_url", "note_chars", "reason")}, ensure_ascii=False)
