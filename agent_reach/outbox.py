@@ -428,13 +428,16 @@ def connect_result(out) -> str:
     """What OpenCLI's `connect --send` did, as the queue reads it: 'sent: ...' only when LinkedIn lists the invitation;
     'not sent: <reason>' (already_connected, connection_pending, profile_name_mismatch...) fails the post;
     a click nobody could confirm is UNKNOWN, so a person looks before anything is sent again."""
-    row = (out[0] if isinstance(out, list) and out else out if isinstance(out, dict) else {}) or {}
+    if isinstance(out, dict):  # OpenCLI 2.0 wraps the rows as {ok, data: [...]}
+        out = next((out[k] for k in ("data", "items") if isinstance(out.get(k), list)), [out])
+    row = (out[0] if isinstance(out, list) and out and isinstance(out[0], dict) else {}) or {}
     status, reason = str(row.get("status") or ""), str(row.get("reason") or row.get("blockReason") or "")
     if status == "sent_verified":
         return "sent: " + json.dumps({k: row.get(k) for k in ("recipient", "profile_url", "note_chars", "reason")}, ensure_ascii=False)
-    if status == "send_unverified":
-        raise unknown(f"Send was clicked for {row.get('recipient') or 'the profile'} but the invitation is not in the sent list yet")
-    raise SystemExit(f"not sent: {reason or status or 'no answer from the page'}")
+    if status == "not_connectable":
+        raise SystemExit(f"not sent: {reason or 'the profile cannot be invited'}")
+    # the command ran to its end with --send and did not say it held back: the click may have happened
+    raise unknown(f"Send may have been clicked for {row.get('recipient') or 'the profile'} ({status or 'no status in the answer'}: {reason or 'no reason'})")
 
 
 # ── X / Twitter (OpenCLI's post and reply; never its batch `reply-dm`) ──

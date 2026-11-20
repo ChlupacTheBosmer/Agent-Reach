@@ -358,8 +358,12 @@ def test_a_connection_request_may_go_without_a_note_and_only_a_listed_invitation
         outbox.connect_result([{"status": "not_connectable", "reason": "already_connected"}])
     with pytest.raises(SystemExit, match="^UNKNOWN"):
         outbox.connect_result([{"status": "send_unverified", "recipient": "Bob B"}])
-    with pytest.raises(SystemExit, match="not sent"):
-        outbox.connect_result({})
+    assert outbox.connect_result({"ok": True, "data": [{"status": "sent_verified", "recipient": "Bob B"}]}).startswith("sent: ")   # OpenCLI 2.0's wrapper
+    with pytest.raises(SystemExit, match="not sent: connection_pending"):
+        outbox.connect_result({"ok": True, "data": [{"status": "not_connectable", "reason": "connection_pending"}]})
+    for odd in ({}, [], {"ok": True, "data": []}, [{"status": "something_new"}]):      # an answer nobody can read is never 'not sent'
+        with pytest.raises(SystemExit, match="^UNKNOWN"):
+            outbox.connect_result(odd)
 
 
 def test_people_search_runs_only_on_a_ready_linkedin_profile_account(db, monkeypatch):
