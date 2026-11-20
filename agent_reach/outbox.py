@@ -378,11 +378,50 @@ def linkedin(d: dict, send: bool) -> str:
     if d["kind"] == "linkedin-message":
         args = ["safe-send", "--thread-url", d["target"], "--expected-name", d["expected_name"], "--message", d["text"]]
     else:
-        args = ["connect", d["target"], "--expected-name", d["expected_name"]] + (["--note", d["text"]] if d["text"].strip() else [])
+        return connect(d, send)
     out = opencli_call("linkedin", args + (["--send"] if send else []), timeout=180)
-    if send and d["kind"] == "linkedin-connect":
-        return connect_result(out)
     return ("sent: " if send else "check ok (OpenCLI dry run): ") + json.dumps(out, ensure_ascii=False)[:300]
+
+
+TITLES = {"ph", "phd", "mgr", "ing", "bc", "dr", "prof", "doc", "rndr", "mudr", "judr", "phdr", "csc", "mba", "msc", "ma", "arch", "et", "dis"}
+
+
+def same_person(expected: str, shown: str) -> bool:
+    """The name the profile shows is the expected person's: diacritics, case, titles and extra middle names aside,
+    every word of the shorter name is in the longer one, and at least two words agree."""
+    import unicodedata
+
+    def words(s):
+        s = unicodedata.normalize("NFKD", s or "").encode("ascii", "ignore").decode().lower()
+        return {w for w in re.sub(r"[^a-z ]+", " ", s).split() if w not in TITLES and len(w) > 1}
+    a, b = sorted((words(expected), words(shown)), key=len)
+    return len(a) >= 2 and a <= b
+
+
+def connect(d: dict, send: bool) -> str:
+    """A LinkedIn connection request through OpenCLI's fail-closed `connect`. OpenCLI wants the profile's name letter
+    for letter; a CRM name often differs from it by a title or diacritics, so on a name mismatch the name the page
+    shows is compared with `same_person` and, when it is the same person at the exact profile address, used instead.
+    A profile OpenCLI refuses before pressing anything is 'not sent', never UNKNOWN."""
+    from agent_reach.backends.opencli import opencli_call
+    from agent_reach.runtime.result import ReachError
+    name = d["expected_name"]
+    for attempt in (1, 2):
+        args = ["connect", d["target"], "--expected-name", name] + (["--note", d["text"]] if d["text"].strip() else [])
+        try:
+            out = opencli_call("linkedin", args + (["--send"] if send else []), timeout=180)
+            break
+        except ReachError as exc:
+            msg = str(getattr(exc, "message", exc))
+            if "connect blocked:" not in msg:
+                raise
+            reason = msg.split("connect blocked:", 1)[1].strip()
+            shown = re.search(r"actual (.+?) at ", str(getattr(exc, "hint", "") or ""))
+            if reason == "profile_name_mismatch" and attempt == 1 and shown and same_person(name, shown.group(1)):
+                name = shown.group(1).strip()
+                continue
+            raise SystemExit(f"not sent: {reason}" + (f" (the profile shows {shown.group(1).strip()!r})" if shown else "")) from None
+    return connect_result(out) if send else "check ok (OpenCLI dry run): " + json.dumps(out, ensure_ascii=False)[:300]
 
 
 def connect_result(out) -> str:

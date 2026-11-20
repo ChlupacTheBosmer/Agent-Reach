@@ -371,3 +371,25 @@ def test_people_search_runs_only_on_a_ready_linkedin_profile_account(db, monkeyp
     monkeypatch.setattr(core, "in_home", lambda a, c, p, timeout=0: seen.update(c=c, p=p) or {"ok": True, "result": [{"name": "Bob B"}]})
     assert core.linkedin_read(db, acc["id"], "people", {"query": "Bob B Uni", "limit": 500}, "t") == [{"name": "Bob B"}]
     assert seen == {"c": "people", "p": {"query": "Bob B Uni", "limit": 100, "clicks": []}}
+
+
+def test_connect_takes_the_name_the_profile_shows_when_it_is_the_same_person(monkeypatch):
+    from agent_reach import outbox
+    from agent_reach.backends import opencli
+    from agent_reach.runtime.result import ReachError
+    assert outbox.same_person("Patricia Schmidtová", "Patricia Schmidtova, Ph.D.") and outbox.same_person("Jan Novák", "Ing. Jan Karel Novák")
+    assert not outbox.same_person("Jan Novák", "Jana Nováková") and not outbox.same_person("Jan Novák", "Jan") and not outbox.same_person("Novák", "Jan Novák")
+    calls = []
+
+    def fake(site, args, timeout=0):
+        calls.append(args)
+        if args[3] == "Jan Novák":
+            raise ReachError("UPSTREAM_BROKEN", "LinkedIn connect blocked: profile_name_mismatch", "Expected Jan Novák; actual " + shown + " at https://www.linkedin.com/in/jn/\nButtons: Connect")
+        return [{"status": "sent_verified", "recipient": args[3]}]
+    monkeypatch.setattr(opencli, "opencli_call", fake)
+    d = {"kind": "linkedin-connect", "target": "https://www.linkedin.com/in/jn/", "expected_name": "Jan Novák", "text": ""}
+    shown = "Ing. Jan Novak"
+    assert outbox.connect(d, True).startswith("sent: ") and calls[1][3] == "Ing. Jan Novak" and "--note" not in calls[1]
+    shown = "Petr Svoboda"
+    with pytest.raises(SystemExit, match="not sent: profile_name_mismatch .*Petr Svoboda"):
+        outbox.connect(d, True)
