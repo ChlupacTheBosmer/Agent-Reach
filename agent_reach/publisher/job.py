@@ -191,6 +191,24 @@ def groups(_payload: dict) -> dict:
                                    if r.get("url", "").startswith("https://www.facebook.com/groups/")]}
 
 
+def _rows(out) -> list:
+    return out if isinstance(out, list) else out.get("data", []) if isinstance(out, dict) else []
+
+
+def people(payload: dict) -> dict:
+    from agent_reach.backends.opencli import opencli_call
+    if not payload.get("query", "").strip():
+        raise SystemExit("people search needs a query")
+    rows = _rows(opencli_call("linkedin", ["people-search", payload["query"], "--limit", str(min(payload.get("limit") or 5, 10))], timeout=180))
+    return {"ok": True, "result": [{k: r.get(k, "") for k in ("name", "headline", "location", "profile_url")} for r in rows]}
+
+
+def connections(payload: dict) -> dict:
+    from agent_reach.backends.opencli import opencli_call
+    rows = _rows(opencli_call("linkedin", ["connections", "--limit", str(payload.get("limit") or 40)], timeout=180))
+    return {"ok": True, "result": [{k: r.get(k, "") for k in ("name", "public_id", "connected_at", "url")} for r in rows]}
+
+
 def collect(payload: dict) -> dict:
     from . import collect as c
     return c.run(payload)
@@ -242,8 +260,9 @@ def main() -> int:
     command = sys.argv[1] if len(sys.argv) > 1 else ""
     payload = json.loads(sys.stdin.read() or "{}")
     step = {"configure": configure, "check": check, "publish": publish, "groups": groups,
-            "open": open_view, "close": close_browser, "collect": collect}.get(command)
-    browser_step = network() not in ("bluesky", "") and command in ("check", "publish", "groups", "collect")
+            "open": open_view, "close": close_browser, "collect": collect,
+            "people": people, "connections": connections}.get(command)
+    browser_step = network() not in ("bluesky", "") and command in ("check", "publish", "groups", "collect", "people", "connections")
     try:
         if network() not in ("bluesky", ""):
             setup_home()

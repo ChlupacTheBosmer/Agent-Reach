@@ -344,3 +344,30 @@ def test_bluesky_email_signs_in_but_the_handle_comes_from_bluesky(db, monkeypatc
     db.execute("UPDATE accounts SET handle='info@v4air.eu' WHERE id=?", (acc["id"],))  # as saved before this fix
     core.check_account(db, acc["id"], "petr")
     assert core.account(db, acc["id"])["handle"] == "v4air.bsky.social"
+
+
+def test_a_connection_request_may_go_without_a_note_and_only_a_listed_invitation_counts_as_sent(db):
+    from agent_reach import outbox
+    acc = core.create_account(db, {"network": "linkedin", "label": "Ada L", "owner": "Ada", "proxy": "http://u:p@1.2.3.4:1"}, "t")
+    body = {"account": acc["id"], "kind": "linkedin-connect", "target": "https://www.linkedin.com/in/bob/", "expected_name": "Bob B", "text": ""}
+    assert core.preview(db, body)["post"]["text"] == ""
+    with pytest.raises(core.Refused):
+        core.preview(db, {**body, "kind": "linkedin-message", "target": "https://www.linkedin.com/messaging/thread/1/"})
+    assert outbox.connect_result([{"status": "sent_verified", "recipient": "Bob B"}]).startswith("sent: ")
+    with pytest.raises(SystemExit, match="not sent: already_connected"):
+        outbox.connect_result([{"status": "not_connectable", "reason": "already_connected"}])
+    with pytest.raises(SystemExit, match="^UNKNOWN"):
+        outbox.connect_result([{"status": "send_unverified", "recipient": "Bob B"}])
+    with pytest.raises(SystemExit, match="not sent"):
+        outbox.connect_result({})
+
+
+def test_people_search_runs_only_on_a_ready_linkedin_profile_account(db, monkeypatch):
+    acc = core.create_account(db, {"network": "linkedin", "label": "Ada L", "owner": "Ada", "proxy": "http://u:p@1.2.3.4:1"}, "t")
+    with pytest.raises(core.Refused, match="not ready"):
+        core.linkedin_read(db, acc["id"], "people", {"query": "Bob"}, "t")
+    db.execute("UPDATE accounts SET status='ok' WHERE id=?", (acc["id"],))
+    seen = {}
+    monkeypatch.setattr(core, "in_home", lambda a, c, p, timeout=0: seen.update(c=c, p=p) or {"ok": True, "result": [{"name": "Bob B"}]})
+    assert core.linkedin_read(db, acc["id"], "people", {"query": "Bob B Uni", "limit": 500}, "t") == [{"name": "Bob B"}]
+    assert seen == {"c": "people", "p": {"query": "Bob B Uni", "limit": 100}}

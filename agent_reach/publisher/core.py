@@ -42,7 +42,7 @@ NETWORKS = {
         "linkedin-post": {"text": 3000, "images": 9, "target": "own", "media": "image"},
         "linkedin-comment-reply": {"text": 1250, "images": 0, "target": "comment"},
         "linkedin-message": {"text": 2000, "images": 0, "target": "thread"},
-        "linkedin-connect": {"text": 300, "images": 0, "target": "person"}}},
+        "linkedin-connect": {"text": 300, "images": 0, "target": "person", "text_optional": True}}},
 }
 OWN_URL = {"bluesky": "https://bsky.app/profile/{h}", "twitter": "https://x.com/{h}", "facebook": "https://www.facebook.com/me",
            "facebookpage": "https://www.facebook.com/{h}", "instagram": "https://www.instagram.com/{h}/",
@@ -229,6 +229,20 @@ def groups(db, account_id: str, actor: str) -> list:
     return out["result"]
 
 
+def linkedin_read(db, account_id: str, command: str, body: dict, actor: str) -> list:
+    """People search or the newest connections through a LinkedIn profile account (paced reads, one browser turn)."""
+    acc = account(db, account_id)
+    if acc["network"] != "linkedin":
+        raise Refused("only a LinkedIn profile account can search people or list connections")
+    if acc["status"] != "ok":
+        raise Refused(f"account {acc['label']} is not ready ({acc['status']})")
+    out = in_home(account_id, command, {"query": str(body.get("query") or "")[:120], "limit": min(int(body.get("limit") or 5), 100)}, timeout=240)
+    store.log(db, actor, f"linkedin.{command}", {"account": account_id, "ok": bool(out.get("ok"))})  # never the query: it names a person
+    if not out.get("ok"):
+        raise Refused(str(out.get("error") or "the read failed"))
+    return out["result"]
+
+
 def check_account(db, account_id: str, actor: str) -> dict:
     _ACCOUNTS_CACHE[account_id] = account(db, account_id)["handle"]
     out = in_home(account_id, "check", {})
@@ -252,7 +266,7 @@ def normalize(db, body: dict) -> dict:
         raise Refused(f"{acc['network']} supports {', '.join(net['kinds'])}")
     spec = net["kinds"][kind]
     text = (body.get("text") or "").strip()
-    if not text and spec["text"]:
+    if not text and spec["text"] and not spec.get("text_optional"):
         raise Refused("the post has no text")
     if len(text) > spec["text"]:
         raise Refused(f"{kind}: {len(text)} characters, at most {spec['text']}")
