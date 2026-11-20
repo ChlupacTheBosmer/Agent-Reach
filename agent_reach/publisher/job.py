@@ -213,7 +213,12 @@ LOOK_JS = """(() => { const seen = (e) => e.offsetParent !== null;
   const t = [...document.querySelectorAll('button, [role=button], [role=menuitem], [role=tab], a, label, input[type=checkbox]')].filter(seen)
     .map(e => (e.innerText || e.getAttribute('aria-label') || '').trim().replace(/\\s+/g, ' ')).filter(x => x && x.length < 70);
   const d = document.querySelector('[role=dialog]');
-  return {url: location.href, title: document.title, labels: [...new Set(t)].slice(0, 140), dialog: d ? d.innerText.slice(0, 1500) : ''}; })()"""
+  const main = document.querySelector('main');
+  const acts = [...document.querySelectorAll('button, [role=button], a, [role=menuitem]')].filter(seen).map(e => ({
+      text: (e.innerText || '').trim().replace(/\\s+/g, ' ').slice(0, 40), aria: (e.getAttribute('aria-label') || '').slice(0, 70),
+      tag: e.tagName, main: !!(main && main.contains(e)), y: Math.round(e.getBoundingClientRect().top)}))
+    .filter(a => /^(more|follow|message|connect|pending|invite|withdraw)/i.test(a.text || a.aria)).slice(0, 25);
+  return {url: location.href, title: document.title, labels: [...new Set(t)].slice(0, 140), acts, dialog: d ? d.innerText.slice(0, 1500) : ''}; })()"""
 
 
 def page_look(payload: dict) -> dict:
