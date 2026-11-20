@@ -47,6 +47,7 @@ ROUTES = [
     ("POST", r"/v1/accounts/([\w-]+)/delete", lambda db, b, a, m: core.delete_account(db, m[1], a)),
     ("POST", r"/v1/accounts/([\w-]+)/groups", lambda db, b, a, m: core.groups(db, m[1], a)),
     ("POST", r"/v1/accounts/([\w-]+)/people", lambda db, b, a, m: core.linkedin_read(db, m[1], "people", b, a)),
+    ("POST", r"/v1/accounts/([\w-]+)/page-look", lambda db, b, a, m: core.linkedin_read(db, m[1], "page_look", b, a)),
     ("POST", r"/v1/accounts/([\w-]+)/connections", lambda db, b, a, m: core.linkedin_read(db, m[1], "connections", b, a)),
     ("POST", r"/v1/accounts/([\w-]+)/view/start", lambda db, b, a, m: core.view_start(db, m[1], a)),
     ("GET", r"/v1/accounts/([\w-]+)/view/frame", lambda db, b, a, m: core.view_frame(db, m[1])),

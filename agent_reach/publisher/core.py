@@ -236,7 +236,8 @@ def linkedin_read(db, account_id: str, command: str, body: dict, actor: str) -> 
         raise Refused("only a LinkedIn profile account can search people or list connections")
     if acc["status"] != "ok":
         raise Refused(f"account {acc['label']} is not ready ({acc['status']})")
-    out = in_home(account_id, command, {"query": str(body.get("query") or "")[:120], "limit": min(int(body.get("limit") or 5), 100)}, timeout=240)
+    out = in_home(account_id, command, {"query": str(body.get("query") or "")[:120], "limit": min(int(body.get("limit") or 5), 100),
+                                         "clicks": [str(c)[:70] for c in body.get("clicks") or []][:4]}, timeout=240)
     store.log(db, actor, f"linkedin.{command}", {"account": account_id, "ok": bool(out.get("ok"))})  # never the query: it names a person
     if not out.get("ok"):
         raise Refused(str(out.get("error") or "the read failed"))

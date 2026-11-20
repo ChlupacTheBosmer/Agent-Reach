@@ -370,4 +370,4 @@ def test_people_search_runs_only_on_a_ready_linkedin_profile_account(db, monkeyp
     seen = {}
     monkeypatch.setattr(core, "in_home", lambda a, c, p, timeout=0: seen.update(c=c, p=p) or {"ok": True, "result": [{"name": "Bob B"}]})
     assert core.linkedin_read(db, acc["id"], "people", {"query": "Bob B Uni", "limit": 500}, "t") == [{"name": "Bob B"}]
-    assert seen == {"c": "people", "p": {"query": "Bob B Uni", "limit": 100}}
+    assert seen == {"c": "people", "p": {"query": "Bob B Uni", "limit": 100, "clicks": []}}

@@ -209,6 +209,36 @@ def connections(payload: dict) -> dict:
     return {"ok": True, "result": [{k: r.get(k, "") for k in ("name", "public_id", "connected_at", "url")} for r in rows]}
 
 
+LOOK_JS = """(() => { const seen = (e) => e.offsetParent !== null;
+  const t = [...document.querySelectorAll('button, [role=button], [role=menuitem], [role=tab], a, label, input[type=checkbox]')].filter(seen)
+    .map(e => (e.innerText || e.getAttribute('aria-label') || '').trim().replace(/\\s+/g, ' ')).filter(x => x && x.length < 70);
+  const d = document.querySelector('[role=dialog]');
+  return {url: location.href, title: document.title, labels: [...new Set(t)].slice(0, 140), dialog: d ? d.innerText.slice(0, 1500) : ''}; })()"""
+
+
+def page_look(payload: dict) -> dict:
+    """What a LinkedIn company page's admin screen shows (labels of the visible controls), after opening the named
+    controls one by one. For building the page-invitation flow; it refuses any control that sends or confirms."""
+    from agent_reach import outbox
+    slug = re.sub(r"[^A-Za-z0-9_%-]", "", str(payload.get("query") or ""))
+    if not slug:
+        raise SystemExit("which company page?")
+    tab = outbox.Tab(f"https://www.linkedin.com/company/{slug}/admin/", "linkedin")
+    try:
+        time.sleep(8)
+        steps = [tab.js(LOOK_JS)]
+        for text in (payload.get("clicks") or [])[:4]:
+            if re.search(r"^invite \d|^send|^post|delete|remove|^confirm|^done", str(text), re.I):
+                raise SystemExit(f"refusing to press {text!r}")
+            hit = tab.click("[...document.querySelectorAll('button, [role=button], [role=menuitem], a')].find(e => e.offsetParent !== null && "
+                            f"(e.innerText || e.getAttribute('aria-label') || '').trim().replace(/\\s+/g, ' ') === {json.dumps(str(text))})")
+            time.sleep(5)
+            steps.append({"clicked": text, "found": bool(hit), **(tab.js(LOOK_JS) or {})})
+        return {"ok": True, "result": steps}
+    finally:
+        tab.close()
+
+
 def collect(payload: dict) -> dict:
     from . import collect as c
     return c.run(payload)
@@ -261,8 +291,8 @@ def main() -> int:
     payload = json.loads(sys.stdin.read() or "{}")
     step = {"configure": configure, "check": check, "publish": publish, "groups": groups,
             "open": open_view, "close": close_browser, "collect": collect,
-            "people": people, "connections": connections}.get(command)
-    browser_step = network() not in ("bluesky", "") and command in ("check", "publish", "groups", "collect", "people", "connections")
+            "people": people, "connections": connections, "page_look": page_look}.get(command)
+    browser_step = network() not in ("bluesky", "") and command in ("check", "publish", "groups", "collect", "people", "connections", "page_look")
     try:
         if network() not in ("bluesky", ""):
             setup_home()
